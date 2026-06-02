@@ -1,7 +1,7 @@
 @echo off
 :: ── UPDATE THIS after you create the GitHub repo ──────────────────────────
-set REPO_ZIP=https://github.com/YOUR_USERNAME/YOUR_REPO/archive/refs/heads/main.zip
-set REPO_FOLDER=YOUR_REPO-main
+set REPO_ZIP=https://github.com/Nikkikoksik/brightspace-quiz-automator/archive/refs/heads/main.zip
+set REPO_FOLDER=brightspace-quiz-automator-main
 :: ──────────────────────────────────────────────────────────────────────────
 
 cd /d "%~dp0"
