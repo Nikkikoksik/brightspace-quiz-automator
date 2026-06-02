@@ -185,18 +185,14 @@ def convert_pdf_to_docx(pdf_path: Path) -> Path:
 
 # ── Step 3: CourseBridge conversion ──────────────────────────────────────────
 async def convert_with_coursebridge(file_path: Path, email: str, password: str) -> str:
-    """Upload docx to CourseBridge, return HTML string.
-
-    NOTE: internals will be replaced with a single API call once the
-    CourseBridge developer provides an endpoint.
-    Signature stays: convert_with_coursebridge(file_path, email, password) -> str
-    """
+    """Upload docx to CourseBridge (doc→HTML converter), return HTML string."""
     print("\nStep 3 — CourseBridge conversion...")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=60)
         context = await browser.new_context(
             storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None
         )
+        await context.grant_permissions(["clipboard-read", "clipboard-write"])
         page = await context.new_page()
         await page.goto(COURSEBRIDGE_URL)
 
@@ -224,23 +220,35 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
             await page.locator("text=Course Syllabus").first.click()
             await page.wait_for_timeout(300)
 
-        print("  Converting (this can take a few minutes)...")
+        print("  Converting...")
         await page.locator("button:has-text('Convert Document')").first.click()
 
-        # Poll every 5 seconds instead of a single wait_for_function
-        for elapsed in range(0, 600, 5):
-            await page.wait_for_timeout(5000)
-            log_el = page.locator("div.font-mono").first
-            log_text = (await log_el.text_content() or "") if await log_el.count() else ""
-            if "Done!" in log_text:
+        # Wait for the "Copy HTML" button to appear — that signals conversion is done
+        print("  Waiting for conversion to complete...")
+        copy_btn = page.locator("button:has-text('Copy HTML')").first
+        for elapsed in range(0, 120, 3):
+            await page.wait_for_timeout(3000)
+            if await copy_btn.count() and await copy_btn.is_visible():
                 print("  ✓ Conversion complete")
                 break
             if elapsed % 15 == 0 and elapsed > 0:
-                print(f"  Still converting... ({elapsed}s)")
+                print(f"  Still waiting... ({elapsed}s)")
         else:
-            raise RuntimeError("CourseBridge conversion timed out after 10 minutes")
+            raise RuntimeError("CourseBridge: 'Copy HTML' button never appeared after 2 minutes")
 
-        html = await page.locator("pre.font-mono").first.inner_text()
+        # Click "Copy HTML" → puts HTML on clipboard
+        await copy_btn.click()
+        await page.wait_for_timeout(500)
+
+        # Read from clipboard first; fall back to scraping the pre element
+        html = ""
+        try:
+            html = await page.evaluate("() => navigator.clipboard.readText()")
+        except Exception:
+            pass
+
+        if not html.strip():
+            html = await page.locator("pre.font-mono").first.inner_text()
 
         await context.storage_state(path=CB_SESSION_FILE)
         await browser.close()
