@@ -141,10 +141,10 @@ class App(ctk.CTk):
         body.pack(fill="both", expand=True)
 
         # Course URL
-        ctk.CTkLabel(body, text="COURSE URL  (Brightspace Content tab)",
+        ctk.CTkLabel(body, text="COURSE  (CRN number  or  full Brightspace URL)",
                      font=ctk.CTkFont(size=11, weight="bold"),
                      text_color="gray").pack(anchor="w", pady=(8, 4))
-        self._outline_url = ctk.CTkEntry(body, placeholder_text="https://learn.okanagancollege.ca/d2l/le/content/…", height=38)
+        self._outline_url = ctk.CTkEntry(body, placeholder_text="e.g.  80147  or  https://learn.okanagancollege.ca/…", height=38)
         self._outline_url.pack(fill="x", pady=(0, 18))
 
         # CourseBridge credentials

@@ -10,6 +10,7 @@ Usage:
 import asyncio
 import os
 import re
+import subprocess
 import sys
 import argparse
 import tempfile
@@ -37,118 +38,104 @@ COURSE_URL = ""
 
 
 # ── Step 1: Find and download course outline ──────────────────────────────────
-async def find_and_download_outline(page: Page, prompt_fn=input) -> Path:
-    """Scan content tree for the outline, confirm with user, download it."""
+async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=input) -> Path:
+    """Find course outline via Brightspace API and download it."""
     print("\nStep 1 — Finding course outline...")
-    await page.wait_for_load_state("networkidle")
-    await page.wait_for_timeout(1000)
+    await page.wait_for_timeout(2000)
 
-    found_link  = None
-    found_title = None
-
-    # Debug: show all links on the page so we can see what's there
-    all_links = await page.locator("a[href]").all()
-    print(f"  [DEBUG] Total links on page: {len(all_links)}")
-    for lnk in all_links[:30]:
-        try:
-            txt  = (await lnk.inner_text()).strip().replace("\n", " ")[:60]
-            href = (await lnk.get_attribute("href") or "")[:80]
-            if txt:
-                print(f"    LINK: {txt!r:40s}  href={href}")
-        except Exception:
-            pass
-
-    # Scan the content tree directly — no search box needed
-    for term in OUTLINE_SEARCH_TERMS:
-        print(f"  Scanning for '{term}'...")
-        links = page.locator(f"a:has-text('{term}')")
-        count = await links.count()
-        print(f"    {count} link(s) found")
-        if count:
-            found_link  = links.first
-            found_title = (await found_link.inner_text()).strip()
-            print(f"    Candidate: {found_title[:80]}")
+    # ── Find topic via Brightspace content API ────────────────────────────────
+    print("  Fetching content list from Brightspace API...")
+    toc = None
+    for api_ver in ["1.70", "1.67", "1.68", "1.69"]:
+        toc = await page.evaluate(f"""
+            async () => {{
+                try {{
+                    const r = await fetch(
+                        '{BRIGHTSPACE_BASE}/d2l/api/le/{api_ver}/{course_id}/content/toc'
+                    );
+                    if (!r.ok) return null;
+                    return await r.json();
+                }} catch(e) {{ return null; }}
+            }}
+        """)
+        if toc:
+            print(f"  ✓ API v{api_ver}")
             break
 
-    if found_title:
-        confirm = prompt_fn(
-            f"Found: {found_title}\n\nIs this the correct outline? (y/n)"
-        ).strip().lower()
-        if confirm != "y":
-            found_link  = None
-            found_title = None
+    matches = []   # list of (title, full_url)
+
+    if toc:
+        def flatten(node):
+            items = []
+            for topic in node.get("Topics", []):
+                items.append((topic.get("Title", ""), topic.get("Url", "")))
+            for mod in node.get("Modules", []):
+                items.extend(flatten(mod))
+            return items
+
+        all_topics = flatten(toc)
+        print(f"  {len(all_topics)} topic(s) in course — scanning for matches...")
+        for title, url in all_topics:
+            for term in OUTLINE_SEARCH_TERMS:
+                if term.lower() in title.lower():
+                    full_url = url if url.startswith("http") else BRIGHTSPACE_BASE + url
+                    matches.append((title, full_url))
+                    print(f"    Candidate: {title}")
+                    break
+        if not matches:
+            print("  No topics matched search terms")
+    else:
+        print("  ✗ API unavailable")
 
     download_dir = Path(tempfile.mkdtemp())
 
-    if found_link:
-        # Strategy 1: check the topic's 3-dot actions menu for a Download option
-        print("  Checking topic actions menu for Download...")
-        short_title = found_title[:40]
-        topic_row = page.locator(
-            f"li:has(a:has-text('{short_title}')), "
-            f"d2l-list-item:has(a:has-text('{short_title}'))"
+    # ── Loop through candidates until user confirms one ───────────────────────
+    for i, (title, url) in enumerate(matches):
+        print(f"  Opening candidate {i+1}/{len(matches)}: {title}...")
+        await page.goto(url)
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(2000)
+
+        confirm = prompt_fn(
+            f"[{i+1}/{len(matches)}] Browser is showing: \"{title}\"\n\n"
+            f"Is this the correct course outline file? (y/n)"
+        ).strip().lower()
+        if confirm != "y":
+            print(f"  Skipping '{title}'...")
+            continue
+
+        # User confirmed — download it
+        dl_btn = page.locator(
+            "a[download], a[href$='.pdf'], a[href$='.docx'], a[href$='.doc'], "
+            "a:has-text('Download'), button:has-text('Download'), [aria-label*='Download']"
         ).first
-        actions_btn = topic_row.locator(
-            "button[aria-haspopup='true'], button[aria-label*='More'], button[aria-label*='Actions']"
-        ).first
-
-        downloaded = False
-        if await actions_btn.count():
-            await actions_btn.click()
-            await page.wait_for_timeout(400)
-            dl_option = page.locator("d2l-menu-item[text='Download'], li:has-text('Download')")
-            if await dl_option.count():
-                print("  Downloading via actions menu...")
-                async with page.expect_download(timeout=30000) as dl_info:
-                    await dl_option.first.click()
-                download = await dl_info.value
-                dest = download_dir / download.suggested_filename
-                await download.save_as(dest)
-                downloaded = True
-            else:
-                print("  No Download option in menu — trying link click...")
-                await page.keyboard.press("Escape")
-                await page.wait_for_timeout(300)
-
-        if not downloaded:
-            # Strategy 2: click the link → open viewer → find download button
-            print("  Opening topic viewer...")
-            await found_link.click()
-            await page.wait_for_load_state("networkidle")
-            await page.wait_for_timeout(1000)
-
-            dl_btn = page.locator(
-                "a[download], a:has-text('Download'), button:has-text('Download'), "
-                "[aria-label*='Download']"
-            ).first
-            if await dl_btn.count():
-                print("  Found Download button in viewer, clicking...")
-                async with page.expect_download(timeout=30000) as dl_info:
-                    await dl_btn.click()
-                download = await dl_info.value
-                dest = download_dir / download.suggested_filename
-                await download.save_as(dest)
-                downloaded = True
-            else:
-                print("  No download button in viewer — falling back to manual...")
-
-        if downloaded:
+        if await dl_btn.count():
+            print("  Clicking Download button...")
+            async with page.expect_download(timeout=30000) as dl_info:
+                await dl_btn.click()
+            download = await dl_info.value
+            dest = download_dir / download.suggested_filename
+            await download.save_as(dest)
+            dest = ensure_extension(dest)
             print(f"  ✓ Downloaded: {dest.name}")
             return dest
+        else:
+            print("  No download button found — trying manual for this topic...")
+            break   # fall through to manual
 
-    # Manual fallback: user clicks the download, we capture it
-    print("  Manual download: waiting for you to click the file in the browser...")
+    # ── Manual fallback ───────────────────────────────────────────────────────
+    print("  Waiting for manual download...")
     prompt_fn(
         "Could not auto-download. In the browser, find the outline file and click its "
         "Download option. Then click OK here."
     )
-    # Capture whatever download just happened (event is buffered by browser)
     try:
         async with page.expect_download(timeout=10000) as dl_info:
             pass
         download = await dl_info.value
         dest = download_dir / download.suggested_filename
         await download.save_as(dest)
+        dest = ensure_extension(dest)
         print(f"  ✓ Downloaded: {dest.name}")
         return dest
     except Exception:
@@ -156,6 +143,25 @@ async def find_and_download_outline(page: Page, prompt_fn=input) -> Path:
             "No download detected. Please run again and use the Download option "
             "for the file before clicking OK."
         )
+
+
+# ── Fix missing extension (Brightspace stores files as UUIDs) ────────────────
+def ensure_extension(path: Path) -> Path:
+    """Detect file type from magic bytes and add .pdf / .docx if missing."""
+    if path.suffix.lower() in (".pdf", ".docx", ".doc"):
+        return path
+    with open(path, "rb") as f:
+        header = f.read(8)
+    if header.startswith(b"%PDF"):
+        new_path = path.with_suffix(".pdf")
+    elif header.startswith(b"PK"):
+        new_path = path.with_suffix(".docx")
+    else:
+        print(f"  ⚠ Unknown file type (header: {header[:4].hex()}) — keeping as-is")
+        return path
+    path.rename(new_path)
+    print(f"  Detected file type → {new_path.suffix}")
+    return new_path
 
 
 # ── Step 2: PDF → docx if needed ─────────────────────────────────────────────
@@ -199,10 +205,12 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
             await page.locator("input[type='email'], input[name='email']").first.fill(email)
             await page.locator("input[type='password']").first.fill(password)
             await page.locator("button[type='submit']").first.click()
-            await page.wait_for_load_state("networkidle")
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(2000)
             await context.storage_state(path=CB_SESSION_FILE)
 
-        await page.wait_for_load_state("networkidle")
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(1000)
 
         print(f"  Uploading {file_path.name}...")
         await page.locator("input[accept='.pdf,.doc,.docx']").set_input_files(str(file_path))
@@ -216,14 +224,21 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
             await page.locator("text=Course Syllabus").first.click()
             await page.wait_for_timeout(300)
 
-        print("  Converting...")
+        print("  Converting (this can take a few minutes)...")
         await page.locator("button:has-text('Convert Document')").first.click()
 
-        await page.wait_for_function(
-            "() => document.querySelector('div.font-mono')?.innerText?.includes('Done!')",
-            timeout=120000
-        )
-        print("  ✓ Conversion complete")
+        # Poll every 5 seconds instead of a single wait_for_function
+        for elapsed in range(0, 600, 5):
+            await page.wait_for_timeout(5000)
+            log_el = page.locator("div.font-mono").first
+            log_text = (await log_el.text_content() or "") if await log_el.count() else ""
+            if "Done!" in log_text:
+                print("  ✓ Conversion complete")
+                break
+            if elapsed % 15 == 0 and elapsed > 0:
+                print(f"  Still converting... ({elapsed}s)")
+        else:
+            raise RuntimeError("CourseBridge conversion timed out after 10 minutes")
 
         html = await page.locator("pre.font-mono").first.inner_text()
 
@@ -292,6 +307,39 @@ async def paste_html_to_syllabus(page: Page, html: str, prompt_fn=input):
     print("  ✓ Saved")
 
 
+# ── CRN → course ID lookup ────────────────────────────────────────────────────
+async def find_course_id_by_crn(page, crn: str) -> str:
+    """Navigate to the Brightspace home page and find the course ID for a CRN."""
+    print(f"  Looking up CRN {crn} on Brightspace home...")
+    await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home")
+    await page.wait_for_load_state("domcontentloaded")
+    await page.wait_for_timeout(2000)
+
+    # Course cards/links on the home page contain the CRN in their text
+    link = page.locator(f"a[href*='/d2l/home/']:has-text('{crn}')").first
+    if not await link.count():
+        # Try the full course list page
+        await page.goto(f"{BRIGHTSPACE_BASE}/d2l/lp/courses/list")
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(2000)
+        link = page.locator(f"a[href*='/d2l/home/']:has-text('{crn}')").first
+
+    if not await link.count():
+        raise RuntimeError(
+            f"Could not find a course with CRN {crn} on Brightspace. "
+            "Make sure you are enrolled/teaching that course."
+        )
+
+    href = await link.get_attribute("href")
+    title = (await link.inner_text()).strip()
+    m = re.search(r'/d2l/home/(\d+)', href)
+    if not m:
+        raise RuntimeError(f"Unexpected href format: {href}")
+    course_id = m.group(1)
+    print(f"  ✓ Found: {title[:60]}  (Brightspace ID: {course_id})")
+    return course_id
+
+
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 async def run(
     dry_run: bool = False,
@@ -305,16 +353,8 @@ async def run(
     _password   = password or COURSEBRIDGE_PASSWORD
 
     if not _course_url:
-        print("✗ Course URL is not set.")
+        print("✗ Course CRN or URL is not set.")
         sys.exit(1)
-
-    # Extract course ID from any Brightspace course URL (lessons, content, quizzes, etc.)
-    match = re.search(r'/(?:le|content|lessons|quizzing)/(\d+)/', _course_url)
-    if not match:
-        print(f"✗ Could not extract course ID from URL: {_course_url}")
-        sys.exit(1)
-    course_id = match.group(1)
-    content_url = f"{BRIGHTSPACE_BASE}/d2l/le/content/{course_id}/Home"
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
@@ -323,22 +363,37 @@ async def run(
         )
         page = await context.new_page()
 
-        print(f"Navigating to course (ID: {course_id})...")
-        await page.goto(_course_url)
+        # Login first (navigate to base URL so session can be restored)
+        print("Opening Brightspace...")
+        await page.goto(BRIGHTSPACE_BASE)
         print("Waiting for login (log in if prompted, then script will continue)...")
         await page.wait_for_url("**/learn.okanagancollege.ca/**", timeout=120000)
         print("✓ Logged in — saving session...")
         await context.storage_state(path=BS_SESSION_FILE)
 
+        # Accept CRN (5-digit number) or a full URL
+        if re.fullmatch(r'\d{4,6}', _course_url.strip()):
+            crn = _course_url.strip()
+            print(f"CRN entered: {crn} — looking up course...")
+            course_id = await find_course_id_by_crn(page, crn)
+        else:
+            match = re.search(r'/(?:le|content|lessons|quizzing|home)/(\d+)', _course_url)
+            if not match:
+                print(f"✗ Could not extract course ID from: {_course_url}")
+                sys.exit(1)
+            course_id = match.group(1)
+            print(f"Course ID from URL: {course_id}")
+
+        content_url = f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
         print(f"Navigating to Content tab...")
         await page.goto(content_url)
         await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(5000)
 
         if dry_run:
             print("⚠  DRY RUN MODE — HTML will not be pasted into Brightspace")
 
-        file_path = await find_and_download_outline(page, prompt_fn=prompt_fn)
+        file_path = await find_and_download_outline(page, course_id=course_id, prompt_fn=prompt_fn)
 
         if file_path.suffix.lower() == ".pdf":
             print("\nStep 2 — PDF detected, converting...")
@@ -348,11 +403,15 @@ async def run(
 
         html = await convert_with_coursebridge(file_path, email=_email, password=_password)
 
+        # Save HTML to a temp file and open in Notepad for review
+        preview_path = _HERE / "coursebridge_preview.html"
+        preview_path.write_text(html, encoding="utf-8")
+        print(f"\n  Opening HTML preview in Notepad: {preview_path}")
+        subprocess.Popen(["notepad.exe", str(preview_path)])
+        prompt_fn("Review the HTML in Notepad. Click OK when you're ready to continue (or close Notepad to abort).")
+
         if dry_run:
-            print("\n✓ Dry run complete. HTML output preview:")
-            print("─" * 60)
-            print(html[:1000])
-            print("─" * 60)
+            print("\n✓ Dry run complete — HTML saved to coursebridge_preview.html")
             await browser.close()
             return
 
