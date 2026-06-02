@@ -306,79 +306,108 @@ async def paste_html_to_syllabus(page: Page, html: str, course_id: str):
     await page.wait_for_timeout(4000)
     print(f"  [4a] ✓ Landed on: {page.url}")
 
-    # 4b: Dump every visible button on the page so we can identify the 3-dots
-    print("  [4b] Dumping all visible buttons on the page...")
-    all_btns = await page.evaluate("""
-        () => {
+    # Helper JS: walk main page + shadow DOM + same-origin iframes.
+    # Coordinates are adjusted so they're always relative to the main viewport
+    # (getBoundingClientRect inside an iframe is relative to that iframe's origin).
+    _WALK_JS = """
+        (opts) => {
+            const hints   = opts && opts.hints   ? opts.hints   : null;
+            const editMode = opts && opts.editMode ? true : false;
             const found = [];
-            function walk(root) {
-                for (const el of root.querySelectorAll('button, [role="button"]')) {
+
+            function walkRoot(root, ox, oy) {
+                const sel = editMode
+                    ? 'd2l-menu-item, [role="menuitem"], button, a, li'
+                    : 'button, [role="button"]';
+                for (const el of root.querySelectorAll(sel)) {
                     const r = el.getBoundingClientRect();
-                    if (r.width > 0 && r.height > 0) {
-                        found.push({
-                            label: el.getAttribute('aria-label') || el.getAttribute('title') || (el.textContent||'').trim().slice(0,50),
-                            x: Math.round(r.left + r.width/2),
-                            y: Math.round(r.top + r.height/2),
-                        });
+                    if (r.width <= 0 || r.height <= 0) continue;
+
+                    let label;
+                    if (editMode) {
+                        // d2l-menu-item stores visible text in the 'text' attribute
+                        label = el.getAttribute('text') || el.getAttribute('aria-label')
+                              || (el.textContent||'').trim().slice(0,50);
+                    } else {
+                        label = el.getAttribute('aria-label') || el.getAttribute('title')
+                              || (el.textContent||'').trim().slice(0,50);
+                    }
+
+                    const x = Math.round(ox + r.left + r.width/2);
+                    const y = Math.round(oy + r.top  + r.height/2);
+
+                    if (hints) {
+                        if (hints.some(h => label.toLowerCase().includes(h)))
+                            return { label, x, y };
+                    } else {
+                        found.push({ label, x, y });
                     }
                 }
+
                 for (const el of root.querySelectorAll('*')) {
-                    if (el.shadowRoot) walk(el.shadowRoot);
+                    if (el.shadowRoot) {
+                        const c = walkRoot(el.shadowRoot, ox, oy);
+                        if (hints && c) return c;
+                    }
+                    if (el.tagName === 'IFRAME') {
+                        try {
+                            const ir = el.getBoundingClientRect();
+                            const c = walkRoot(el.contentDocument, ox + ir.left, oy + ir.top);
+                            if (hints && c) return c;
+                        } catch(e) {}
+                    }
                 }
+                return hints ? null : found;
             }
-            walk(document);
-            return found;
+
+            return walkRoot(document, 0, 0);
         }
-    """)
+    """
+
+    # 4b: Dump every visible button (main page + iframes) for debugging
+    print("  [4b] Dumping all visible buttons (including iframes)...")
+    all_btns = await page.evaluate(_WALK_JS, {"hints": None})
     print(f"  [4b] Found {len(all_btns)} button(s):")
     for b in all_btns:
         print(f"       '{b['label']}'  ({b['x']},{b['y']})")
 
-    # 4c: Find the 3-dots / More button (any button with "more"/"action"/"option" in label)
-    print("  [4c] Looking for 3-dots / More button...")
-    dots = next(
-        (b for b in all_btns if any(
-            h in b["label"].lower()
-            for h in ["more", "action", "option", "..."]
-        )),
-        None,
+    # 4c: Find the topic "Options" button (exact label match first, then fallbacks)
+    print("  [4c] Looking for Options / More Actions button...")
+    def find_btn(btns, exact=None, contains=None, exclude=None):
+        for b in btns:
+            lbl = b["label"]
+            if exact and lbl == exact:
+                if not exclude or exclude not in lbl.lower():
+                    return b
+            if contains and contains in lbl.lower():
+                if not exclude or exclude not in lbl.lower():
+                    return b
+        return None
+
+    dots = (
+        find_btn(all_btns, exact="Options")
+        or find_btn(all_btns, contains="more options")
+        or find_btn(all_btns, contains="more actions")
+        or find_btn(all_btns, contains="options", exclude="course")
     )
     if not dots:
         raise RuntimeError(
-            f"Could not find a More/Actions button on the page.\n"
+            f"Could not find Options/More Actions button.\n"
             f"  Page: {page.url}\n"
-            f"  Buttons found: {[b['label'] for b in all_btns]}"
+            f"  Buttons: {[b['label'] for b in all_btns]}"
         )
-    print(f"  [4c] ✓ Using '{dots['label']}' at ({dots['x']},{dots['y']}) — clicking...")
+    print(f"  [4c] ✓ '{dots['label']}' at ({dots['x']},{dots['y']}) — clicking...")
     await page.mouse.click(dots["x"], dots["y"])
     await page.wait_for_timeout(600)
 
-    # 4e: Click Edit in the dropdown (shadow DOM)
+    # 4e: Find Edit menu item — re-scan after menu opens, exact label match
     print("  [4e] Looking for Edit in dropdown...")
-    edit = await page.evaluate("""
-        () => {
-            function walk(root) {
-                for (const el of root.querySelectorAll(
-                    'd2l-menu-item, [role="menuitem"], button, a, li'
-                )) {
-                    const text = (el.textContent || '').trim();
-                    if (text === 'Edit' || text === 'Edit Topic' || text === 'Edit HTML') {
-                        const r = el.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0)
-                            return { x: r.left + r.width/2, y: r.top + r.height/2, text };
-                    }
-                }
-                for (const el of root.querySelectorAll('*')) {
-                    if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
-                }
-                return null;
-            }
-            return walk(document);
-        }
-    """)
+    menu_items = await page.evaluate(_WALK_JS, {"hints": None, "editMode": True})
+    print(f"  [4e] Menu items visible: {[b['label'] for b in menu_items if b['label'].strip()]}")
+    edit = next((b for b in menu_items if b["label"].strip().lower() == "edit"), None)
     if not edit:
         raise RuntimeError("Could not find Edit option in the dropdown.")
-    print(f"  [4e] ✓ Found '{edit.get('text','Edit')}' — clicking (new tab expected)...")
+    print(f"  [4e] ✓ '{edit['label']}' at ({edit['x']},{edit['y']}) — clicking (new tab expected)...")
 
     # 4f: Click Edit — opens new tab with the HTML editor
     async with page.context.expect_page() as new_page_info:
@@ -550,19 +579,39 @@ async def run(
 
         print("Opening Brightspace...")
         await page.goto(BRIGHTSPACE_BASE)
-        print("Waiting for login (log in if prompted, then script will continue)...")
-        # Wait until we land on Brightspace proper — the SAML redirect may bounce
-        # through Microsoft a few times before settling, so keep waiting until
-        # the final URL is on learn.okanagancollege.ca (not microsoftonline.com).
-        for _ in range(60):
-            await page.wait_for_url("**/learn.okanagancollege.ca/**", timeout=120000)
-            await page.wait_for_timeout(1500)
-            if "microsoftonline.com" not in page.url and "microsoft.com" not in page.url:
-                break
-        await page.wait_for_load_state("networkidle", timeout=30000)
-        await page.wait_for_timeout(1000)
-        print(f"✓ Logged in — saving session...")
+        print("─" * 50)
+        print("  Log in with your Okanagan College account.")
+        print("  Complete any MFA steps (email code, authenticator, etc.).")
+        print("  The script will continue automatically once it detects")
+        print("  that you are on the Brightspace home page.")
+        print("─" * 50)
+
+        # Poll until we are fully on Brightspace (not Microsoft/redirecting)
+        for i in range(180):   # up to 9 minutes
+            await page.wait_for_timeout(3000)
+            url = page.url
+            on_bs   = "learn.okanagancollege.ca" in url
+            on_ms   = "microsoftonline.com" in url or "login.microsoft" in url
+            if on_bs and not on_ms:
+                # One more check: navigate explicitly to /d2l/home to confirm
+                try:
+                    await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home", timeout=15000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    await page.wait_for_timeout(2000)
+                except Exception:
+                    pass
+                final_url = page.url
+                if "learn.okanagancollege.ca" in final_url and "microsoftonline.com" not in final_url:
+                    break
+            if i % 10 == 0 and i > 0:
+                print(f"  Still waiting for login... ({i * 3}s elapsed)  |  current: {url[:80]}")
+        else:
+            raise RuntimeError("Login timed out after 9 minutes — please try again")
+
+        print(f"✓ Logged in and on Brightspace home — saving session...")
+        await page.wait_for_load_state("networkidle", timeout=20000)
         await context.storage_state(path=BS_SESSION_FILE)
+        print("✓ Session saved")
 
         # Accept CRN (5-digit number) or a full URL
         if re.fullmatch(r'\d{4,6}', _course_url.strip()):

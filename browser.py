@@ -16,13 +16,47 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
         )
         page = await context.new_page()
 
+        # Pre-login: open Brightspace home and wait for confirmed login
+        print("Opening Brightspace...")
+        await page.goto("https://learn.okanagancollege.ca")
+        print("─" * 50)
+        print("  Log in with your Okanagan College account.")
+        print("  Complete any MFA steps (email code, authenticator, etc.).")
+        print("  The script will continue automatically once you are on")
+        print("  the Brightspace home page.")
+        print("─" * 50)
+
+        for i in range(180):
+            await page.wait_for_timeout(3000)
+            url = page.url
+            on_bs = "learn.okanagancollege.ca" in url
+            on_ms = "microsoftonline.com" in url or "login.microsoft" in url
+            if on_bs and not on_ms:
+                try:
+                    await page.goto("https://learn.okanagancollege.ca/d2l/home", timeout=15000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    await page.wait_for_timeout(2000)
+                except Exception:
+                    pass
+                if "learn.okanagancollege.ca" in page.url and "microsoftonline.com" not in page.url:
+                    break
+            if i % 10 == 0 and i > 0:
+                print(f"  Still waiting... ({i * 3}s)  |  {url[:80]}")
+        else:
+            raise RuntimeError("Login timed out after 9 minutes")
+
+        print(f"✓ Logged in — saving session...")
+        await page.wait_for_load_state("networkidle", timeout=20000)
+        await context.storage_state(path=SESSION_FILE)
+        print("✓ Session saved")
+
         for course_url in urls:
             print(f"\n{'─' * 50}")
             print(f"Course: {course_url}")
 
             await page.goto(course_url)
-            print("Waiting for quizzes page (log in if prompted)...")
-            await page.wait_for_url("**/quizzing/**", timeout=120000)
+            print("Waiting for quizzes page...")
+            await page.wait_for_url("**/quizzing/**", timeout=60000)
             await page.wait_for_load_state("networkidle")
             await context.storage_state(path=SESSION_FILE)
 
