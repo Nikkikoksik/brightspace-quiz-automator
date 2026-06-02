@@ -13,7 +13,6 @@ import re
 import subprocess
 import sys
 import argparse
-import tempfile
 from pathlib import Path
 
 if sys.platform == "win32":
@@ -87,7 +86,8 @@ async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=i
     else:
         print("  ✗ API unavailable")
 
-    download_dir = Path(tempfile.mkdtemp())
+    download_dir = _HERE / "downloads"
+    download_dir.mkdir(exist_ok=True)
 
     # ── Loop through candidates until user confirms one ───────────────────────
     for i, (title, url) in enumerate(matches):
