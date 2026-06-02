@@ -322,33 +322,51 @@ async def paste_html_to_syllabus(page: Page, html: str, prompt_fn=input):
 async def find_course_id_by_crn(page, crn: str) -> str:
     """Navigate to the Brightspace home page and find the course ID for a CRN."""
     print(f"  Looking up CRN {crn} on Brightspace home...")
-    await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home")
-    await page.wait_for_load_state("domcontentloaded")
-    await page.wait_for_timeout(2000)
 
-    # Course cards/links on the home page contain the CRN in their text
-    link = page.locator(f"a[href*='/d2l/home/']:has-text('{crn}')").first
-    if not await link.count():
-        # Try the full course list page
-        await page.goto(f"{BRIGHTSPACE_BASE}/d2l/lp/courses/list")
+    # Course cards live inside d2l-my-courses shadow DOM — standard locators can't see them.
+    # Use JS to walk all shadow roots and collect every /d2l/home/ link.
+    _js = """
+        (crn) => {
+            const results = [];
+            function walk(root) {
+                for (const el of root.querySelectorAll('a')) {
+                    const href = el.getAttribute('href') || '';
+                    if (href.includes('/d2l/home/') && el.textContent.includes(crn)) {
+                        results.push({ href: el.href || href, text: (el.textContent || '').trim().slice(0, 100) });
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) walk(el.shadowRoot);
+                }
+            }
+            walk(document);
+            return results;
+        }
+    """
+
+    for nav_url in [f"{BRIGHTSPACE_BASE}/d2l/home", f"{BRIGHTSPACE_BASE}/d2l/lp/courses/list"]:
+        await page.goto(nav_url)
         await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(2000)
-        link = page.locator(f"a[href*='/d2l/home/']:has-text('{crn}')").first
+        await page.wait_for_timeout(3000)
 
-    if not await link.count():
-        raise RuntimeError(
-            f"Could not find a course with CRN {crn} on Brightspace. "
-            "Make sure you are enrolled/teaching that course."
-        )
+        links = await page.evaluate(_js, crn)
+        print(f"  [{nav_url.split('/')[-1]}] found {len(links)} link(s) containing '{crn}'")
+        for lnk in links:
+            print(f"    {lnk['text'][:80]}  →  {lnk['href']}")
 
-    href = await link.get_attribute("href")
-    title = (await link.inner_text()).strip()
-    m = re.search(r'/d2l/home/(\d+)', href)
-    if not m:
-        raise RuntimeError(f"Unexpected href format: {href}")
-    course_id = m.group(1)
-    print(f"  ✓ Found: {title[:60]}  (Brightspace ID: {course_id})")
-    return course_id
+        if links:
+            href = links[0]["href"]
+            title = links[0]["text"]
+            m = re.search(r'/d2l/home/(\d+)', href)
+            if m:
+                course_id = m.group(1)
+                print(f"  ✓ Found: {title[:60]}  (Brightspace ID: {course_id})")
+                return course_id
+
+    raise RuntimeError(
+        f"Could not find a course with CRN {crn} on Brightspace. "
+        "Make sure you are enrolled/teaching that course."
+    )
 
 
 # ── Main orchestrator ─────────────────────────────────────────────────────────
@@ -378,7 +396,12 @@ async def run(
         print("Opening Brightspace...")
         await page.goto(BRIGHTSPACE_BASE)
         print("Waiting for login (log in if prompted, then script will continue)...")
+        # Wait until we're on Brightspace proper (not Microsoft login)
         await page.wait_for_url("**/learn.okanagancollege.ca/**", timeout=120000)
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(2000)
+        current_url = page.url
+        print(f"  Current URL: {current_url}")
         print("✓ Logged in — saving session...")
         await context.storage_state(path=BS_SESSION_FILE)
 
