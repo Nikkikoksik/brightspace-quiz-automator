@@ -1,18 +1,19 @@
-import os
 from pathlib import Path
 from playwright.async_api import async_playwright
 
 from navigation import get_quiz_names, open_quiz_edit
 from actions import apply_gradebook, apply_auto_submit, save_quiz
 
-SESSION_FILE = str(Path(__file__).parent / "session.json")
+BS_PROFILE = str(Path(__file__).parent / "bs_profile")
 
 
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
-        context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None
+        # Persistent context = real Chrome profile; survives restarts and Microsoft SSO
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir=BS_PROFILE,
+            headless=False,
+            slow_mo=80,
         )
         page = await context.new_page()
 
@@ -24,7 +25,6 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             print("Waiting for quizzes page (log in if prompted)...")
             await page.wait_for_url("**/quizzing/**", timeout=120000)
             await page.wait_for_load_state("networkidle")
-            await context.storage_state(path=SESSION_FILE)
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
@@ -52,4 +52,4 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
-        await browser.close()
+        await context.close()

@@ -30,8 +30,8 @@ OUTLINE_SEARCH_TERMS = ["syllabus", "outline", "guideline"]
 SYLLABUS_TOPIC_NAME  = "Course Syllabus"
 
 _HERE = Path(__file__).parent
-BS_SESSION_FILE = str(_HERE / "session.json")   # shared with quiz automator
-CB_SESSION_FILE = str(_HERE / "cb_session.json")
+BS_PROFILE = str(_HERE / "bs_profile")   # shared with quiz automator
+CB_PROFILE = str(_HERE / "cb_profile")
 
 COURSE_URL = ""
 
@@ -191,9 +191,11 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
     """Upload docx to CourseBridge (doc→HTML converter), return HTML string."""
     print("\nStep 3 — CourseBridge conversion...")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=60)
-        context = await browser.new_context(
-            storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None
+        # Persistent profile so CourseBridge login survives restarts
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir=CB_PROFILE,
+            headless=False,
+            slow_mo=60,
         )
         await context.grant_permissions(["clipboard-read", "clipboard-write"])
         page = await context.new_page()
@@ -206,7 +208,6 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
             await page.locator("button[type='submit']").first.click()
             await page.wait_for_load_state("domcontentloaded")
             await page.wait_for_timeout(2000)
-            await context.storage_state(path=CB_SESSION_FILE)
 
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(1000)
@@ -253,8 +254,7 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
         if not html.strip():
             html = await page.locator("pre.font-mono").first.inner_text()
 
-        await context.storage_state(path=CB_SESSION_FILE)
-        await browser.close()
+        await context.close()
 
     print(f"  ✓ HTML captured ({len(html)} chars)")
     return html
@@ -386,24 +386,22 @@ async def run(
         sys.exit(1)
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
-        context = await browser.new_context(
-            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None
+        # Persistent profile so Brightspace/Microsoft SSO login survives restarts
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir=BS_PROFILE,
+            headless=False,
+            slow_mo=80,
         )
         page = await context.new_page()
 
-        # Login first (navigate to base URL so session can be restored)
+        # Login (persistent profile remembers login after first run)
         print("Opening Brightspace...")
         await page.goto(BRIGHTSPACE_BASE)
         print("Waiting for login (log in if prompted, then script will continue)...")
-        # Wait until we're on Brightspace proper (not Microsoft login)
         await page.wait_for_url("**/learn.okanagancollege.ca/**", timeout=120000)
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(2000)
-        current_url = page.url
-        print(f"  Current URL: {current_url}")
-        print("✓ Logged in — saving session...")
-        await context.storage_state(path=BS_SESSION_FILE)
+        print(f"✓ On Brightspace: {page.url}")
 
         # Accept CRN (5-digit number) or a full URL
         if re.fullmatch(r'\d{4,6}', _course_url.strip()):
@@ -446,7 +444,7 @@ async def run(
 
         if dry_run:
             print("\n✓ Dry run complete — HTML saved to coursebridge_preview.html")
-            await browser.close()
+            await context.close()
             return
 
         await page.goto(content_url)
@@ -455,7 +453,7 @@ async def run(
         await paste_html_to_syllabus(page, html, prompt_fn=prompt_fn)
 
         print("\n✓ All done!")
-        await browser.close()
+        await context.close()
 
 
 if __name__ == "__main__":

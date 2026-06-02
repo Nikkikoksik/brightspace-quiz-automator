@@ -2,6 +2,10 @@ session.json
 bs_session.json
 cb_session.json
 outline_config.json
+bs_profile/
+cb_profile/
+downloads/
+coursebridge_preview.html
 __pycache__/
 *.pyc
 *.pyo
