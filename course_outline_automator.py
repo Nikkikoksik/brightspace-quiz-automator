@@ -262,60 +262,190 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
 
 
 # ── Step 4: Paste HTML into Brightspace ───────────────────────────────────────
-async def paste_html_to_syllabus(page: Page, html: str, prompt_fn=input):
-    """Navigate to Welcome Module → Course Syllabus topic and replace HTML."""
+async def paste_html_to_syllabus(page: Page, html: str, course_id: str):
+    """Find Course Syllabus topic via API, open it, click Edit, replace HTML."""
     print("\nStep 4 — Pasting HTML into Brightspace...")
 
-    topic = page.locator(f"text={SYLLABUS_TOPIC_NAME}").first
-    if not await topic.count():
-        print(f"  ⚠ Topic '{SYLLABUS_TOPIC_NAME}' not found.")
-        choice = prompt_fn(f"Topic '{SYLLABUS_TOPIC_NAME}' not found. Continue anyway? (y/n)").strip().lower()
-        if choice != "y":
-            print("  Aborted.")
-            return
+    # Find the Course Syllabus topic URL from the content API
+    print("  Looking up Course Syllabus topic URL...")
+    toc = None
+    for api_ver in ["1.70", "1.67", "1.68", "1.69"]:
+        toc = await page.evaluate(f"""
+            async () => {{
+                try {{
+                    const r = await fetch('{BRIGHTSPACE_BASE}/d2l/api/le/{api_ver}/{course_id}/content/toc');
+                    if (!r.ok) return null;
+                    return await r.json();
+                }} catch(e) {{ return null; }}
+            }}
+        """)
+        if toc:
+            break
 
-    print(f"  Opening '{SYLLABUS_TOPIC_NAME}' actions menu...")
-    dots_btn = page.locator(
-        f"button[aria-label*='{SYLLABUS_TOPIC_NAME}'], "
-        f"d2l-dropdown-button-subtle[text='{SYLLABUS_TOPIC_NAME}']"
-    ).first
-    if not await dots_btn.count():
-        topic_row = page.locator(
-            f"li:has-text('{SYLLABUS_TOPIC_NAME}'), d2l-list-item:has-text('{SYLLABUS_TOPIC_NAME}')"
-        ).first
-        dots_btn = topic_row.locator("button[aria-haspopup='true'], button[aria-label*='Actions']").first
+    syllabus_url = None
 
-    await dots_btn.click()
-    await page.wait_for_timeout(400)
-    await page.locator("d2l-menu-item[text='Edit'], li:has-text('Edit')").first.click()
+    def flatten(node):
+        items = []
+        for topic in node.get("Topics", []):
+            items.append((topic.get("Title", ""), topic.get("Url", "")))
+        for mod in node.get("Modules", []):
+            items.extend(flatten(mod))
+        return items
 
+    if toc:
+        for title, url in flatten(toc):
+            if title.strip().lower() == SYLLABUS_TOPIC_NAME.lower():
+                syllabus_url = url if url.startswith("http") else BRIGHTSPACE_BASE + url
+                print(f"  ✓ Found: {title} → {syllabus_url}")
+                break
+
+    if not syllabus_url:
+        raise RuntimeError(
+            f"Could not find '{SYLLABUS_TOPIC_NAME}' topic via API. "
+            "Make sure it exists in the course content."
+        )
+
+    # Navigate to the Course Syllabus topic page
+    print(f"  Opening topic page...")
+    await page.goto(syllabus_url)
+    await page.wait_for_load_state("domcontentloaded")
+    await page.wait_for_timeout(3000)
+
+    # Click the 3-dots button at top right of the topic viewer (shadow DOM)
+    print("  Clicking 3-dots menu...")
+    _shadow_click = """
+        (labelHints) => {
+            function find(root) {
+                for (const el of root.querySelectorAll('button, [role="button"]')) {
+                    const label = (
+                        el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || ''
+                    ).toLowerCase();
+                    if (labelHints.some(h => label.includes(h))) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0)
+                            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                }
+                return null;
+            }
+            return find(document);
+        }
+    """
+
+    dots_coords = await page.evaluate(_shadow_click, ["more actions", "more options", "more", "actions"])
+    if not dots_coords:
+        raise RuntimeError("Could not find 3-dots/More Actions button on the topic page")
+    await page.mouse.click(dots_coords["x"], dots_coords["y"])
+    await page.wait_for_timeout(600)
+
+    # Click "Edit" in the dropdown (shadow DOM)
+    print("  Clicking Edit...")
+    edit_coords = await page.evaluate("""
+        () => {
+            function find(root) {
+                for (const el of root.querySelectorAll(
+                    'd2l-menu-item, [role="menuitem"], button, a, li'
+                )) {
+                    const text = (el.textContent || '').trim();
+                    if (text === 'Edit' || text === 'Edit Topic' || text === 'Edit HTML') {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0)
+                            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                }
+                return null;
+            }
+            return find(document);
+        }
+    """)
+    if not edit_coords:
+        raise RuntimeError("Could not find Edit option in dropdown menu")
+
+    # Edit opens a new tab
     async with page.context.expect_page() as new_page_info:
-        pass
+        await page.mouse.click(edit_coords["x"], edit_coords["y"])
     edit_page = await new_page_info.value
-    await edit_page.wait_for_load_state("networkidle")
+    await edit_page.wait_for_load_state("domcontentloaded")
+    await edit_page.wait_for_timeout(3000)
     print("  Edit page opened")
 
-    await edit_page.wait_for_selector("iframe[id*='tinymce'], .tox-tinymce", timeout=20000)
-    await edit_page.wait_for_timeout(1000)
-
-    source_btn = edit_page.locator("button[aria-label='Source code'], button[title='Source code']").first
+    # Click Source Code button — aria-label="Source Code" (confirmed from live HTML)
+    print("  Clicking Source Code button...")
+    source_btn = edit_page.locator('button[aria-label="Source Code"]').first
     if not await source_btn.count():
-        source_btn = edit_page.locator("button:has-text('</>'), button[data-mce-name='code']").first
-    await source_btn.click()
-    await edit_page.wait_for_timeout(500)
+        # Shadow DOM fallback
+        coords = await edit_page.evaluate("""
+            () => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('button')) {
+                        const label = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+                        if (label === 'Source Code' || label === 'Source code') {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }
+        """)
+        if not coords:
+            raise RuntimeError("Could not find Source Code button in the editor")
+        await edit_page.mouse.click(coords["x"], coords["y"])
+    else:
+        await source_btn.click()
+    await edit_page.wait_for_timeout(800)
 
+    # In the Source Code dialog: select all → delete → paste HTML
     print("  Replacing HTML in source dialog...")
-    textarea = edit_page.locator("div.tox-dialog textarea, textarea.tox-textarea").first
+    textarea = edit_page.locator("textarea").first
+    await textarea.wait_for(timeout=10000)
     await textarea.click()
     await edit_page.keyboard.press("Control+a")
+    await edit_page.keyboard.press("Delete")
     await textarea.fill(html)
-    await edit_page.wait_for_timeout(300)
+    await edit_page.wait_for_timeout(400)
 
-    await edit_page.locator("button:has-text('Save'), button[title='Save']").last.click()
-    await edit_page.wait_for_timeout(500)
+    # Click OK to close the dialog
+    ok_btn = edit_page.locator("button:has-text('OK'), button:has-text('Save')").first
+    await ok_btn.click()
+    await edit_page.wait_for_timeout(600)
 
-    await edit_page.locator("button:has-text('Save'), d2l-button:has-text('Save')").last.click()
-    await edit_page.wait_for_load_state("networkidle", timeout=15000)
+    # Save the topic page
+    print("  Saving topic...")
+    save_coords = await edit_page.evaluate("""
+        () => {
+            function find(root) {
+                for (const el of root.querySelectorAll('button, d2l-button')) {
+                    const text = (el.textContent || '').trim();
+                    const label = el.getAttribute('aria-label') || '';
+                    if (text === 'Save' || label === 'Save') {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                }
+                return null;
+            }
+            return find(document);
+        }
+    """)
+    if save_coords:
+        await edit_page.mouse.click(save_coords["x"], save_coords["y"])
+    else:
+        await edit_page.locator("button:has-text('Save')").last.click()
+    await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
     print("  ✓ Saved")
 
 
@@ -454,7 +584,7 @@ async def run(
         await page.goto(content_url)
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(2000)
-        await paste_html_to_syllabus(page, html, prompt_fn=prompt_fn)
+        await paste_html_to_syllabus(page, html, course_id=course_id)
 
         print("\n✓ All done!")
         await context.close()
