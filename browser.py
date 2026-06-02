@@ -1,10 +1,11 @@
 import os
+from pathlib import Path
 from playwright.async_api import async_playwright
 
 from navigation import get_quiz_names, open_quiz_edit
 from actions import apply_gradebook, apply_auto_submit, save_quiz
 
-SESSION_FILE = "session.json"
+SESSION_FILE = str(Path(__file__).parent / "session.json")
 
 
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None):

@@ -1,4 +1,7 @@
 session.json
+bs_session.json
+cb_session.json
+outline_config.json
 __pycache__/
 *.pyc
 *.pyo
