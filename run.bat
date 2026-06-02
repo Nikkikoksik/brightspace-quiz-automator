@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-python quiz_automator.py %*
+python gui.py
 pause
