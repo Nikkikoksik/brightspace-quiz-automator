@@ -91,57 +91,68 @@ async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=i
 
     # ── Loop through candidates until user confirms one ───────────────────────
     for i, (title, url) in enumerate(matches):
-        print(f"  Opening candidate {i+1}/{len(matches)}: {title}...")
+        print(f"  Downloading candidate {i+1}/{len(matches)}: {title}...")
         await page.goto(url)
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(2000)
 
-        confirm = prompt_fn(
-            f"[{i+1}/{len(matches)}] Browser is showing: \"{title}\"\n\n"
-            f"Is this the correct course outline file? (y/n)"
-        ).strip().lower()
-        if confirm != "y":
-            print(f"  Skipping '{title}'...")
-            continue
-
-        # User confirmed — download it
+        # Auto-download it first so the user can open and inspect it
         dl_btn = page.locator(
             "a[download], a[href$='.pdf'], a[href$='.docx'], a[href$='.doc'], "
             "a:has-text('Download'), button:has-text('Download'), [aria-label*='Download']"
         ).first
+
+        dest = None
         if await dl_btn.count():
             print("  Clicking Download button...")
             async with page.expect_download(timeout=30000) as dl_info:
                 await dl_btn.click()
             download = await dl_info.value
-            dest = download_dir / download.suggested_filename
-            await download.save_as(dest)
-            dest = ensure_extension(dest)
-            print(f"  ✓ Downloaded: {dest.name}")
-            return dest
+            raw_dest = download_dir / download.suggested_filename
+            await download.save_as(raw_dest)
+            dest = ensure_extension(raw_dest)
+            print(f"  ✓ Saved: {dest}")
+            # Open file in default Windows app so user can inspect it
+            os.startfile(str(dest))
         else:
-            print("  No download button found — trying manual for this topic...")
-            break   # fall through to manual
+            print(f"  ⚠ No download button found for '{title}' — showing page in browser")
+
+        confirm = prompt_fn(
+            f"[{i+1}/{len(matches)}] \"{title}\" has been opened.\n\n"
+            f"Is this the correct course outline file? (y/n)"
+        ).strip().lower()
+
+        if confirm == "y" and dest:
+            return dest
+        elif confirm == "y" and not dest:
+            # No file yet — fall through to manual
+            break
+        else:
+            if dest:
+                print(f"  Skipping '{title}' (file kept at {dest.name})...")
+            else:
+                print(f"  Skipping '{title}'...")
+            continue
 
     # ── Manual fallback ───────────────────────────────────────────────────────
-    print("  Waiting for manual download...")
+    print("  No matching file confirmed — waiting for manual download...")
     prompt_fn(
-        "Could not auto-download. In the browser, find the outline file and click its "
-        "Download option. Then click OK here."
+        "In the browser, find the course outline file, click its Download option, "
+        "and wait for it to save. Then click OK here."
     )
+    # Listen for a download that was triggered while the dialog was open
     try:
-        async with page.expect_download(timeout=10000) as dl_info:
-            pass
-        download = await dl_info.value
-        dest = download_dir / download.suggested_filename
-        await download.save_as(dest)
-        dest = ensure_extension(dest)
+        dl = await page.context.wait_for_event("download", timeout=30000)
+        raw_dest = download_dir / dl.suggested_filename
+        await dl.save_as(raw_dest)
+        dest = ensure_extension(raw_dest)
         print(f"  ✓ Downloaded: {dest.name}")
+        os.startfile(str(dest))
         return dest
     except Exception:
         raise RuntimeError(
-            "No download detected. Please run again and use the Download option "
-            "for the file before clicking OK."
+            "No download detected. Click the Download option in the browser "
+            "before clicking OK in the dialog."
         )
 
 
