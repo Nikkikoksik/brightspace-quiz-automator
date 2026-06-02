@@ -1,15 +1,18 @@
+import os
 from pathlib import Path
 from playwright.async_api import async_playwright
 
 from navigation import get_quiz_names, open_quiz_edit
 from actions import apply_gradebook, apply_auto_submit, save_quiz
 
-BS_PROFILE = str(Path(__file__).parent / "bs_profile")
+_LOCAL = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "BrightspaceAutomator"
+BS_PROFILE = str(_LOCAL / "bs_profile")
 
 
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None):
+    Path(BS_PROFILE).mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
-        # Persistent context = real Chrome profile; survives restarts and Microsoft SSO
+        # Profile in %LOCALAPPDATA% — not synced by OneDrive, persists Microsoft SSO
         context = await p.chromium.launch_persistent_context(
             user_data_dir=BS_PROFILE,
             headless=False,

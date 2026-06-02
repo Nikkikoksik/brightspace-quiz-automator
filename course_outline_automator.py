@@ -30,8 +30,9 @@ OUTLINE_SEARCH_TERMS = ["syllabus", "outline", "guideline"]
 SYLLABUS_TOPIC_NAME  = "Course Syllabus"
 
 _HERE = Path(__file__).parent
-BS_PROFILE = str(_HERE / "bs_profile")   # shared with quiz automator
-CB_PROFILE = str(_HERE / "cb_profile")
+_LOCAL = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "BrightspaceAutomator"
+BS_PROFILE = str(_LOCAL / "bs_profile")
+CB_PROFILE = str(_LOCAL / "cb_profile")
 
 COURSE_URL = ""
 
@@ -385,8 +386,12 @@ async def run(
         print("✗ Course CRN or URL is not set.")
         sys.exit(1)
 
+    # Ensure profile dirs exist outside OneDrive so Chrome doesn't conflict with sync
+    Path(BS_PROFILE).mkdir(parents=True, exist_ok=True)
+    Path(CB_PROFILE).mkdir(parents=True, exist_ok=True)
+
     async with async_playwright() as p:
-        # Persistent profile so Brightspace/Microsoft SSO login survives restarts
+        # Persistent profile stored in %LOCALAPPDATA% — survives restarts, not synced by OneDrive
         context = await p.chromium.launch_persistent_context(
             user_data_dir=BS_PROFILE,
             headless=False,
@@ -394,12 +399,11 @@ async def run(
         )
         page = await context.new_page()
 
-        # Login (persistent profile remembers login after first run)
         print("Opening Brightspace...")
         await page.goto(BRIGHTSPACE_BASE)
         print("Waiting for login (log in if prompted, then script will continue)...")
         await page.wait_for_url("**/learn.okanagancollege.ca/**", timeout=120000)
-        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_load_state("networkidle", timeout=30000)
         await page.wait_for_timeout(2000)
         print(f"✓ On Brightspace: {page.url}")
 
