@@ -91,18 +91,26 @@ async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=i
 
     # ── Loop through candidates until user confirms one ───────────────────────
     for i, (title, url) in enumerate(matches):
-        print(f"  Downloading candidate {i+1}/{len(matches)}: {title}...")
+        print(f"  Opening candidate {i+1}/{len(matches)}: {title}...")
         await page.goto(url)
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(2000)
 
-        # Auto-download it first so the user can open and inspect it
+        confirm = prompt_fn(
+            f"[{i+1}/{len(matches)}] Browser is showing: \"{title}\"\n\n"
+            f"Is this the correct course outline file? (y/n)"
+        ).strip().lower()
+
+        if confirm != "y":
+            print(f"  Skipping '{title}'...")
+            continue
+
+        # User confirmed — now download and open it
         dl_btn = page.locator(
             "a[download], a[href$='.pdf'], a[href$='.docx'], a[href$='.doc'], "
             "a:has-text('Download'), button:has-text('Download'), [aria-label*='Download']"
         ).first
 
-        dest = None
         if await dl_btn.count():
             print("  Clicking Download button...")
             async with page.expect_download(timeout=30000) as dl_info:
@@ -111,28 +119,12 @@ async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=i
             raw_dest = download_dir / download.suggested_filename
             await download.save_as(raw_dest)
             dest = ensure_extension(raw_dest)
-            print(f"  ✓ Saved: {dest}")
-            # Open file in default Windows app so user can inspect it
+            print(f"  ✓ Saved: {dest.name}")
             os.startfile(str(dest))
-        else:
-            print(f"  ⚠ No download button found for '{title}' — showing page in browser")
-
-        confirm = prompt_fn(
-            f"[{i+1}/{len(matches)}] \"{title}\" has been opened.\n\n"
-            f"Is this the correct course outline file? (y/n)"
-        ).strip().lower()
-
-        if confirm == "y" and dest:
             return dest
-        elif confirm == "y" and not dest:
-            # No file yet — fall through to manual
-            break
         else:
-            if dest:
-                print(f"  Skipping '{title}' (file kept at {dest.name})...")
-            else:
-                print(f"  Skipping '{title}'...")
-            continue
+            print(f"  ⚠ No download button found for '{title}' — falling back to manual download")
+            break
 
     # ── Manual fallback ───────────────────────────────────────────────────────
     print("  No matching file confirmed — waiting for manual download...")
