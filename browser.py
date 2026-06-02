@@ -5,18 +5,14 @@ from playwright.async_api import async_playwright
 from navigation import get_quiz_names, open_quiz_edit
 from actions import apply_gradebook, apply_auto_submit, save_quiz
 
-_LOCAL = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "BrightspaceAutomator"
-BS_PROFILE = str(_LOCAL / "bs_profile")
+SESSION_FILE = str(Path(__file__).parent / "session.json")
 
 
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None):
-    Path(BS_PROFILE).mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
-        # Profile in %LOCALAPPDATA% — not synced by OneDrive, persists Microsoft SSO
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=BS_PROFILE,
-            headless=False,
-            slow_mo=80,
+        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        context = await browser.new_context(
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None
         )
         page = await context.new_page()
 
@@ -28,6 +24,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             print("Waiting for quizzes page (log in if prompted)...")
             await page.wait_for_url("**/quizzing/**", timeout=120000)
             await page.wait_for_load_state("networkidle")
+            await context.storage_state(path=SESSION_FILE)
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
@@ -55,4 +52,4 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
-        await context.close()
+        await browser.close()
