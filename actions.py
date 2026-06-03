@@ -44,11 +44,25 @@ async def apply_gradebook(page: Page, dry_run: bool):
 async def apply_auto_submit(page: Page, dry_run: bool):
     """Set timer expiry action to 'Automatically submit the quiz attempt'."""
     try:
+        # Wait for the editor to render the Timing section
+        try:
+            await page.wait_for_selector(
+                "button.d2l-collapsible-panel-opener", timeout=15000
+            )
+        except Exception:
+            pass
+
         timing_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Timing")
         if await timing_btn.count():
             if await timing_btn.get_attribute("aria-expanded") == "false":
                 await timing_btn.click()
-                await page.wait_for_timeout(500)
+                await page.wait_for_timeout(600)
+
+        # Wait for Timer Settings link to appear
+        try:
+            await page.wait_for_selector("text=Timer Settings", timeout=10000)
+        except Exception:
+            pass
 
         timer_link = page.locator("text=Timer Settings").first
         if not await timer_link.count():
