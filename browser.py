@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 from playwright.async_api import async_playwright
@@ -8,7 +9,7 @@ from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignm
 SESSION_FILE = str(Path(__file__).parent / "session.json")
 
 
-async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, start_from: int = 1):
+async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
         context = await browser.new_context(
@@ -74,9 +75,11 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             total = len(names)
             if limit:
                 names = names[:limit]
+            loop = asyncio.get_running_loop()
+            start_from = await loop.run_in_executor(None, ask_fn, total, "quiz") if ask_fn else 1
             if start_from > 1:
                 names = names[start_from - 1:]
-                print(f"Found {total} quiz(es). Resuming from #{start_from}...")
+                print(f"Resuming from #{start_from} of {total}...")
             else:
                 print(f"Found {total} quiz(es). Starting...")
 
@@ -103,7 +106,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
         await browser.close()
 
 
-async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, start_from: int = 1):
+async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False, slow_mo=80,
@@ -166,9 +169,11 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             total = len(names)
             if limit:
                 names = names[:limit]
+            loop = asyncio.get_running_loop()
+            start_from = await loop.run_in_executor(None, ask_fn, total, "assignment") if ask_fn else 1
             if start_from > 1:
                 names = names[start_from - 1:]
-                print(f"Found {total} assignment(s). Resuming from #{start_from}...")
+                print(f"Resuming from #{start_from} of {total}...")
             else:
                 print(f"Found {total} assignment(s). Starting...")
 

@@ -121,15 +121,6 @@ class App(ctk.CTk):
                         variable=self._quiz_dryrun,
                         text_color="#f0a500").pack(anchor="w", padx=16, pady=(4, 14))
 
-        rf = ctk.CTkFrame(body, fg_color="transparent")
-        rf.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(rf, text="Start from #", font=ctk.CTkFont(size=13)).pack(side="left")
-        self._quiz_start_from = ctk.CTkEntry(rf, width=70, height=32, placeholder_text="1")
-        self._quiz_start_from.pack(side="left", padx=(8, 0))
-        self._quiz_start_from.insert(0, "1")
-        ctk.CTkLabel(rf, text="  (1 = beginning)", font=ctk.CTkFont(size=11),
-                     text_color="gray").pack(side="left")
-
         self._quiz_run_btn = ctk.CTkButton(
             body, text="▶   RUN QUIZ AUTOMATOR", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
@@ -190,15 +181,6 @@ class App(ctk.CTk):
         ctk.CTkCheckBox(sf, text="Dry run  (preview only — nothing will be saved)",
                         variable=self._assign_dryrun,
                         text_color="#f0a500").pack(anchor="w", padx=16, pady=(4, 14))
-
-        af = ctk.CTkFrame(body, fg_color="transparent")
-        af.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(af, text="Start from #", font=ctk.CTkFont(size=13)).pack(side="left")
-        self._assign_start_from = ctk.CTkEntry(af, width=70, height=32, placeholder_text="1")
-        self._assign_start_from.pack(side="left", padx=(8, 0))
-        self._assign_start_from.insert(0, "1")
-        ctk.CTkLabel(af, text="  (1 = beginning)", font=ctk.CTkFont(size=11),
-                     text_color="gray").pack(side="left")
 
         self._assign_run_btn = ctk.CTkButton(
             body, text="▶   RUN ASSIGNMENT AUTOMATOR", height=52,
@@ -424,6 +406,29 @@ class App(ctk.CTk):
             pass
         self.after(100, self._poll_log)
 
+    # ── Ask-start-from dialog ─────────────────────────────────────────────────
+
+    def _make_ask_fn(self):
+        """Return a callable that pops a start-from dialog on the main thread."""
+        import tkinter.simpledialog as sd
+        result = [1]
+        event = threading.Event()
+
+        def ask(total, label):
+            def show():
+                val = sd.askinteger(
+                    "Start from",
+                    f"Found {total} {label}(s).\n\nStart from which number?\n(Leave blank or cancel = start from 1)",
+                    minvalue=1, maxvalue=total, initialvalue=1,
+                )
+                result[0] = val if val else 1
+                event.set()
+            self.after(0, show)
+            event.wait()
+            return result[0]
+
+        return ask
+
     # ── Quiz run ─────────────────────────────────────────────────────────────
 
     def _start_quiz_run(self):
@@ -445,10 +450,7 @@ class App(ctk.CTk):
             "set_auto_submit":  self._autosubmit_var.get(),
         }
         dry_run = self._quiz_dryrun.get()
-        try:
-            start_from = max(1, int(self._quiz_start_from.get().strip() or "1"))
-        except ValueError:
-            start_from = 1
+        ask_fn  = self._make_ask_fn()
         q = self._log_queue
         resume = self._resume_event
 
@@ -467,7 +469,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 from browser import run as browser_run
-                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn, start_from=start_from))
+                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn, ask_fn=ask_fn))
             except Exception as e:
                 q.put(("quiz", f"✗  {e}"))
             finally:
@@ -499,10 +501,7 @@ class App(ctk.CTk):
         self._assign_log.configure(state="disabled")
         settings = {"set_in_gradebook": self._assign_gradebook_var.get()}
         dry_run = self._assign_dryrun.get()
-        try:
-            start_from = max(1, int(self._assign_start_from.get().strip() or "1"))
-        except ValueError:
-            start_from = 1
+        ask_fn  = self._make_ask_fn()
         q = self._log_queue
         resume = self._resume_event
 
@@ -520,7 +519,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 from browser import run_assignments
-                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn, start_from=start_from))
+                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn, ask_fn=ask_fn))
             except Exception as e:
                 q.put(("assign", f"✗  {e}"))
             finally:
