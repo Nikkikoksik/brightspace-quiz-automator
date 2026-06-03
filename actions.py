@@ -137,7 +137,7 @@ async def save_quiz(page: Page, dry_run: bool):
         if not coords:
             raise Exception("Save button not found in shadow DOM")
         await page.mouse.click(coords["x"], coords["y"])
-        await page.wait_for_load_state("networkidle", timeout=12000)
+        await page.wait_for_load_state("domcontentloaded", timeout=8000)
         print("    Save      : ✓")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
@@ -245,7 +245,7 @@ async def save_assignment(page: Page, dry_run: bool):
         if not coords:
             raise Exception("Save button not found in shadow DOM")
         await page.mouse.click(coords["x"], coords["y"])
-        await page.wait_for_load_state("networkidle", timeout=12000)
+        await page.wait_for_load_state("domcontentloaded", timeout=8000)
         print("    Save      : ✓")
     except Exception as e:
         print(f"    Save      : ✗ {e}")

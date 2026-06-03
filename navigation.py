@@ -34,7 +34,8 @@ async def open_assignment_edit(page: Page, name: str):
         "li:has-text('Edit Folder'), li:has-text('Edit Assignment')"
     ).first
     await edit.click()
-    await page.wait_for_load_state("networkidle")
+    await page.wait_for_load_state("domcontentloaded")
+    await page.wait_for_timeout(800)
 
 
 async def get_quiz_names(page: Page) -> list[str]:

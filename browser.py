@@ -144,9 +144,9 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 await page.goto(course_url, wait_until="commit")
             except Exception:
                 pass
-            await page.wait_for_load_state("networkidle")
-            await page.wait_for_timeout(1500)
-            print(f"  Page URL : {page.url[:100]}")
+            await page.wait_for_selector(
+                "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
+            )
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
@@ -168,8 +168,9 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                     await page.goto(course_url, wait_until="commit")
                 except Exception:
                     pass
-                await page.wait_for_load_state("networkidle")
-                await page.wait_for_timeout(1000)
+                await page.wait_for_selector(
+                    "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
+                )
                 await open_assignment_edit(page, name)
                 print(f"  Edit URL : {page.url[:100]}")
                 if settings.get("set_in_gradebook"):
