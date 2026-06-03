@@ -76,10 +76,12 @@ class App(ctk.CTk):
         tabs.pack(fill="both", expand=True, padx=16, pady=(8, 16))
         tabs.add("Quiz Automator")
         tabs.add("Assignment Automator")
+        tabs.add("Timer Fix")
         tabs.add("Course Outline")
 
         self._build_quiz_tab(tabs.tab("Quiz Automator"))
         self._build_assignment_tab(tabs.tab("Assignment Automator"))
+        self._build_timer_fix_tab(tabs.tab("Timer Fix"))
         self._build_outline_tab(tabs.tab("Course Outline"))
 
     # ── Quiz Automator tab ───────────────────────────────────────────────────
@@ -226,6 +228,103 @@ class App(ctk.CTk):
         self._assign_url_rows.append((row, entry))
 
     # ── Course Outline tab ───────────────────────────────────────────────────
+
+    # ── Timer Fix tab ────────────────────────────────────────────────────────
+
+    def _build_timer_fix_tab(self, parent):
+        body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        body.pack(fill="both", expand=True)
+
+        ctk.CTkLabel(
+            body,
+            text="Re-runs only the auto-submit timer fix. Skips grade book entirely.",
+            font=ctk.CTkFont(size=12), text_color="gray",
+        ).pack(anchor="w", pady=(10, 12))
+
+        ctk.CTkLabel(body, text="QUIZ PAGE URLS",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="gray").pack(anchor="w", pady=(0, 4))
+
+        self._tfix_urls_container = ctk.CTkFrame(body)
+        self._tfix_urls_container.pack(fill="x", pady=(0, 6))
+        self._tfix_url_rows = []
+
+        ctk.CTkButton(
+            body, text="＋  Add quiz page URL", height=32,
+            fg_color="transparent", border_width=1,
+            command=self._add_tfix_url_row,
+        ).pack(anchor="w", pady=(0, 18))
+
+        sf = ctk.CTkFrame(body)
+        sf.pack(fill="x", pady=(0, 18))
+        self._tfix_dryrun = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(sf, text="Dry run  (preview only — nothing will be saved)",
+                        variable=self._tfix_dryrun,
+                        text_color="#f0a500").pack(anchor="w", padx=16, pady=14)
+
+        self._tfix_run_btn = ctk.CTkButton(
+            body, text="▶   RUN TIMER FIX", height=52,
+            font=ctk.CTkFont(size=17, weight="bold"),
+            command=self._start_timer_fix,
+        )
+        self._tfix_run_btn.pack(fill="x", pady=(0, 18))
+
+        ctk.CTkLabel(body, text="LOG",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="gray").pack(anchor="w", pady=(0, 4))
+
+        self._tfix_log = ctk.CTkTextbox(
+            body, height=280, state="disabled",
+            font=ctk.CTkFont(family="Courier New", size=12),
+        )
+        self._tfix_log.pack(fill="x")
+        self._add_tfix_url_row()
+
+    def _add_tfix_url_row(self, url=""):
+        row = ctk.CTkFrame(self._tfix_urls_container, fg_color="transparent")
+        row.pack(fill="x", padx=10, pady=5)
+        entry = ctk.CTkEntry(row, placeholder_text="Paste quiz page URL here…", height=38)
+        entry.pack(side="left", fill="x", expand=True)
+        if url:
+            entry.insert(0, url)
+        def remove():
+            self._tfix_url_rows = [(f, e) for f, e in self._tfix_url_rows if f is not row]
+            row.destroy()
+        ctk.CTkButton(
+            row, text="✕", width=38, height=38,
+            fg_color="transparent", text_color="gray",
+            hover_color="#3a3a3a", command=remove,
+        ).pack(side="left", padx=(6, 0))
+        self._tfix_url_rows.append((row, entry))
+
+    def _start_timer_fix(self):
+        urls = [e.get().strip() for _, e in self._tfix_url_rows if e.get().strip()]
+        if not urls:
+            self._append(self._tfix_log, "⚠  No URLs entered.")
+            return
+        self._tfix_run_btn.configure(state="disabled", text="Running…")
+        self._tfix_log.configure(state="normal")
+        self._tfix_log.delete("1.0", "end")
+        self._tfix_log.configure(state="disabled")
+        dry_run = self._tfix_dryrun.get()
+        ask_fn  = self._make_ask_fn()
+        q = self._log_queue
+
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("tfix", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                from browser import run_timer_fix
+                asyncio.run(run_timer_fix(urls=urls, dry_run=dry_run, ask_fn=ask_fn))
+            except Exception as e:
+                q.put(("tfix", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("tfix", "__DONE__"))
+        threading.Thread(target=worker, daemon=True).start()
 
     def _build_outline_tab(self, parent):
         body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -387,6 +486,8 @@ class App(ctk.CTk):
                     box = self._quiz_log
                 elif tag == "assign":
                     box = self._assign_log
+                elif tag == "tfix":
+                    box = self._tfix_log
                 else:
                     box = self._outline_log
                 if msg == "__DONE__":
@@ -398,6 +499,8 @@ class App(ctk.CTk):
                         self._assign_run_btn.configure(state="normal", text="▶   RUN ASSIGNMENT AUTOMATOR")
                         self._assign_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
                         self._resume_event.set()
+                    elif tag == "tfix":
+                        self._tfix_run_btn.configure(state="normal", text="▶   RUN TIMER FIX")
                     else:
                         self._outline_run_btn.configure(state="normal", text="▶   RUN COURSE OUTLINE AUTOMATOR")
                 else:
@@ -405,6 +508,29 @@ class App(ctk.CTk):
         except queue.Empty:
             pass
         self.after(100, self._poll_log)
+
+    # ── Ask-start-from dialog ─────────────────────────────────────────────────
+
+    def _make_ask_fn(self):
+        """Return a callable that pops a start-from dialog on the main thread."""
+        import tkinter.simpledialog as sd
+        result = [1]
+        event = threading.Event()
+
+        def ask(total, label):
+            def show():
+                val = sd.askinteger(
+                    "Start from",
+                    f"Found {total} {label}(s).\n\nStart from which number?\n(Leave blank or cancel = start from 1)",
+                    minvalue=1, maxvalue=total, initialvalue=1,
+                )
+                result[0] = val if val else 1
+                event.set()
+            self.after(0, show)
+            event.wait()
+            return result[0]
+
+        return ask
 
     # ── Quiz run ─────────────────────────────────────────────────────────────
 
@@ -427,6 +553,7 @@ class App(ctk.CTk):
             "set_auto_submit":  self._autosubmit_var.get(),
         }
         dry_run = self._quiz_dryrun.get()
+        ask_fn  = self._make_ask_fn()
         q = self._log_queue
         resume = self._resume_event
 
@@ -445,7 +572,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 from browser import run as browser_run
-                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn))
+                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn, ask_fn=ask_fn))
             except Exception as e:
                 q.put(("quiz", f"✗  {e}"))
             finally:
@@ -477,6 +604,7 @@ class App(ctk.CTk):
         self._assign_log.configure(state="disabled")
         settings = {"set_in_gradebook": self._assign_gradebook_var.get()}
         dry_run = self._assign_dryrun.get()
+        ask_fn  = self._make_ask_fn()
         q = self._log_queue
         resume = self._resume_event
 
@@ -494,7 +622,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 from browser import run_assignments
-                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn))
+                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn, ask_fn=ask_fn))
             except Exception as e:
                 q.put(("assign", f"✗  {e}"))
             finally:

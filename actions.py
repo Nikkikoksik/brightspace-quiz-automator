@@ -4,6 +4,11 @@ from playwright.async_api import Page
 async def apply_gradebook(page: Page, dry_run: bool):
     """Switch quiz from Not in Grade Book → In Grade Book."""
     try:
+        try:
+            await page.wait_for_selector("button.d2l-grade-info", timeout=10000)
+        except Exception:
+            pass
+
         grade_btn = page.locator("button.d2l-grade-info").first
 
         if not await grade_btn.count():
@@ -39,16 +44,25 @@ async def apply_gradebook(page: Page, dry_run: bool):
 async def apply_auto_submit(page: Page, dry_run: bool):
     """Set timer expiry action to 'Automatically submit the quiz attempt'."""
     try:
+        # Wait for the editor to render the Timing section
+        try:
+            await page.wait_for_selector(
+                "button.d2l-collapsible-panel-opener", timeout=15000
+            )
+        except Exception:
+            pass
+
         timing_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Timing")
         if await timing_btn.count():
             if await timing_btn.get_attribute("aria-expanded") == "false":
                 await timing_btn.click()
+                await page.wait_for_timeout(600)
 
         # Wait for Timer Settings to actually appear instead of a fixed delay
         try:
-            await page.wait_for_selector("text=Timer Settings", timeout=15000)
+            await page.wait_for_selector("text=Timer Settings", timeout=30000)
         except Exception:
-            print("    Timer     : Timer Settings link not found after 15s — skipping")
+            print("    Timer     : Timer Settings link not found after 30s — skipping")
             return
 
         timer_link = page.locator("text=Timer Settings").first
@@ -64,7 +78,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         await timer_link.click()
         await page.wait_for_selector(
             "input[type='radio'][name='timeLimitOption'][value='autosubmit']",
-            timeout=15000,
+            timeout=30000,
         )
         await page.locator(
             "input[type='radio'][name='timeLimitOption'][value='autosubmit']"
@@ -105,7 +119,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                 }
                 return !hasOk(document);
             }
-        """, timeout=8000)
+        """, timeout=30000)
         print("    Timer     : ✓ auto-submit selected")
 
     except Exception as e:
@@ -143,7 +157,7 @@ async def save_quiz(page: Page, dry_run: bool):
         if not coords:
             raise Exception("Save button not found in shadow DOM")
         await page.mouse.click(coords["x"], coords["y"])
-        await page.wait_for_load_state("networkidle", timeout=12000)
+        await page.wait_for_load_state("domcontentloaded", timeout=8000)
         print("    Save      : ✓")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
@@ -157,11 +171,21 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
         info = await page.evaluate("""
             () => {
                 function find(root) {
-                    for (const el of root.querySelectorAll('button.d2l-grade-info, button[class*="grade-info"]')) {
+                    // Search by class first
+                    for (const el of root.querySelectorAll('button.d2l-grade-info, button[class*="grade-info"], [class*="grade-info"]')) {
                         const r = el.getBoundingClientRect();
                         if (r.width > 0)
                             return { x: r.left + r.width / 2, y: r.top + r.height / 2,
                                      text: el.innerText || el.textContent || '' };
+                    }
+                    // Fall back: any visible element whose text contains "Not in Grade Book"
+                    for (const el of root.querySelectorAll('button, a, [role="button"], d2l-button, select')) {
+                        const t = el.innerText || el.textContent || '';
+                        if (t.includes('Not in Grade Book')) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0)
+                                return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: t };
+                        }
                     }
                     for (const el of root.querySelectorAll('*')) {
                         if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
@@ -251,7 +275,7 @@ async def save_assignment(page: Page, dry_run: bool):
         if not coords:
             raise Exception("Save button not found in shadow DOM")
         await page.mouse.click(coords["x"], coords["y"])
-        await page.wait_for_load_state("networkidle", timeout=12000)
+        await page.wait_for_load_state("domcontentloaded", timeout=8000)
         print("    Save      : ✓")
     except Exception as e:
         print(f"    Save      : ✗ {e}")

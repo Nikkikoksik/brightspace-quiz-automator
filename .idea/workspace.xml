@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="b2f28df4-a3ca-4fa2-ba89-ecb5a2fbfce9" name="Changes" comment="" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="30" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="1.8502400244124853" />
+      <entry key="MS500" value="4.559265144089615" />
+      <entry key="S2" value="13.361615767973465" />
+      <entry key="S5" value="25.044284121827936" />
+      <entry key="S10" value="34.055265926481965" />
+      <entry key="S30" value="47.27187462066811" />
+      <entry key="S60" value="64.87606993210063" />
+      <entry key="M2" value="102.56868383033633" />
+      <entry key="M5" value="212.2741602553077" />
+      <entry key="M10" value="329.54004785326674" />
+      <entry key="M15" value="394.57967982042555" />
+      <entry key="M30" value="495.18433220668817" />
+      <entry key="H1" value="589.092394336841" />
+      <entry key="H2" value="666.4035611793352" />
+      <entry key="H4" value="718.694331759232" />
+      <entry key="D1" value="772.0495875459524" />
+      <entry key="W1" value="782.2642591678128" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="5.583775427876033E-94" />
+      <entry key="S2" value="4.8610712400753725E-24" />
+      <entry key="S5" value="4.72816686527587E-10" />
+      <entry key="S10" value="2.1745301297497378E-5" />
+      <entry key="S30" value="0.0288960369522255" />
+      <entry key="S60" value="0.19981504202571113" />
+      <entry key="M2" value="0.6686632410411797" />
+      <entry key="M5" value="2.2556632797687275" />
+      <entry key="M10" value="4.051459488291059" />
+      <entry key="M15" value="5.039445381427466" />
+      <entry key="M30" value="6.40006517729626" />
+      <entry key="H1" value="7.39137475102309" />
+      <entry key="H2" value="8.074411167480855" />
+      <entry key="H4" value="8.498047989928962" />
+      <entry key="D1" value="8.90991290449377" />
+      <entry key="W1" value="8.986958042470112" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="1.8267100301624992" />
+      <entry key="MS500" value="4.547332347962919" />
+      <entry key="S2" value="13.351803892556754" />
+      <entry key="S5" value="25.03692972322188" />
+      <entry key="S10" value="34.05030331724057" />
+      <entry key="S30" value="47.29631299326908" />
+      <entry key="S60" value="65.06823332894442" />
+      <entry key="M2" value="103.22732151582612" />
+      <entry key="M5" value="214.5182338338178" />
+      <entry key="M10" value="333.58147361863655" />
+      <entry key="M15" value="399.6108792168048" />
+      <entry key="M30" value="501.5792044874499" />
+      <entry key="H1" value="596.48078861539" />
+      <entry key="H2" value="674.4763524603328" />
+      <entry key="H4" value="727.1915301808034" />
+      <entry key="D1" value="780.9593525008986" />
+      <entry key="W1" value="791.2511959057686" />
+    </decayedShown>
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 8,
+  "fromUser": false
+}]]></component>
+  <component name="ProjectId" id="3EdgT2ap7tFobnv0qX2UxiXaa2x" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "SHELLCHECK.PATH": "I do mind",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "main",
+    "junie.onboarding.icon.badge.shown": "true",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "to.speed.mode.migration.done": "true",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
+    </key>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-c59985aa861c-c2ffad84badb-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-261.24374.152" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="b2f28df4-a3ca-4fa2-ba89-ecb5a2fbfce9" name="Changes" comment="" />
+      <created>1780513865006</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1780513865006</updated>
+      <workItem from="1780513866068" duration="2894000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>
