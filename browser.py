@@ -8,7 +8,7 @@ from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignm
 SESSION_FILE = str(Path(__file__).parent / "session.json")
 
 
-async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None):
+async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
         context = await browser.new_context(
@@ -83,13 +83,15 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                 if settings.get("set_auto_submit"):
                     await apply_auto_submit(page, dry_run)
                 await save_quiz(page, dry_run)
+                if pause_fn:
+                    pause_fn()
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
         await browser.close()
 
 
-async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None):
+async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False, slow_mo=80,
@@ -137,13 +139,16 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             except Exception:
                 pass
             await page.wait_for_load_state("networkidle")
+            await page.wait_for_timeout(1500)
+            print(f"  Page URL : {page.url[:100]}")
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
 
             names = await get_assignment_names(page)
+            print(f"  Found names: {names}")
             if not names:
-                print("✗ No assignments found.")
+                print("✗ No assignments found — check the URL points to the Assignments list page.")
                 continue
 
             if limit:
@@ -158,10 +163,14 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 except Exception:
                     pass
                 await page.wait_for_load_state("networkidle")
+                await page.wait_for_timeout(1000)
                 await open_assignment_edit(page, name)
+                print(f"  Edit URL : {page.url[:100]}")
                 if settings.get("set_in_gradebook"):
                     await apply_assignment_gradebook(page, dry_run)
                 await save_assignment(page, dry_run)
+                if pause_fn:
+                    pause_fn()
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")

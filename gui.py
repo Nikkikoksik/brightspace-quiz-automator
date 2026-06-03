@@ -49,8 +49,10 @@ class App(ctk.CTk):
         self.geometry("700x800")
         self.resizable(False, False)
 
-        self._log_queue   = queue.Queue()
-        self._url_rows    = []
+        self._log_queue    = queue.Queue()
+        self._url_rows     = []
+        self._resume_event = threading.Event()
+        self._resume_event.set()
 
         self._build_ui()
         self._load_courses()
@@ -124,7 +126,15 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_quiz_run,
         )
-        self._quiz_run_btn.pack(fill="x", pady=(0, 18))
+        self._quiz_run_btn.pack(fill="x", pady=(0, 6))
+
+        self._quiz_pause_btn = ctk.CTkButton(
+            body, text="⏸   PAUSE", height=36,
+            fg_color="#555555", hover_color="#444444",
+            command=self._toggle_quiz_pause,
+            state="disabled",
+        )
+        self._quiz_pause_btn.pack(fill="x", pady=(0, 18))
 
         ctk.CTkLabel(body, text="LOG",
                      font=ctk.CTkFont(size=11, weight="bold"),
@@ -177,7 +187,15 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_assignment_run,
         )
-        self._assign_run_btn.pack(fill="x", pady=(0, 18))
+        self._assign_run_btn.pack(fill="x", pady=(0, 6))
+
+        self._assign_pause_btn = ctk.CTkButton(
+            body, text="⏸   PAUSE", height=36,
+            fg_color="#555555", hover_color="#444444",
+            command=self._toggle_assign_pause,
+            state="disabled",
+        )
+        self._assign_pause_btn.pack(fill="x", pady=(0, 18))
 
         ctk.CTkLabel(body, text="LOG",
                      font=ctk.CTkFont(size=11, weight="bold"),
@@ -374,8 +392,12 @@ class App(ctk.CTk):
                 if msg == "__DONE__":
                     if tag == "quiz":
                         self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
+                        self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
+                        self._resume_event.set()
                     elif tag == "assign":
                         self._assign_run_btn.configure(state="normal", text="▶   RUN ASSIGNMENT AUTOMATOR")
+                        self._assign_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
+                        self._resume_event.set()
                     else:
                         self._outline_run_btn.configure(state="normal", text="▶   RUN COURSE OUTLINE AUTOMATOR")
                 else:
@@ -394,6 +416,8 @@ class App(ctk.CTk):
 
         self._save_courses(urls)
         self._quiz_run_btn.configure(state="disabled", text="Running…")
+        self._quiz_pause_btn.configure(state="normal")
+        self._resume_event.set()
         self._quiz_log.configure(state="normal")
         self._quiz_log.delete("1.0", "end")
         self._quiz_log.configure(state="disabled")
@@ -404,6 +428,13 @@ class App(ctk.CTk):
         }
         dry_run = self._quiz_dryrun.get()
         q = self._log_queue
+        resume = self._resume_event
+
+        def pause_fn():
+            if not resume.is_set():
+                q.put(("quiz", "⏸  Paused — click Resume to continue..."))
+                resume.wait()
+                q.put(("quiz", "▶  Resuming..."))
 
         def worker():
             class W:
@@ -414,7 +445,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 from browser import run as browser_run
-                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings))
+                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn))
             except Exception as e:
                 q.put(("quiz", f"✗  {e}"))
             finally:
@@ -422,6 +453,14 @@ class App(ctk.CTk):
                 q.put(("quiz", "__DONE__"))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _toggle_quiz_pause(self):
+        if self._resume_event.is_set():
+            self._resume_event.clear()
+            self._quiz_pause_btn.configure(text="▶   RESUME", fg_color="#2a4a2a")
+        else:
+            self._resume_event.set()
+            self._quiz_pause_btn.configure(text="⏸   PAUSE", fg_color="#555555")
 
     # ── Assignment run ────────────────────────────────────────────────────────
 
@@ -431,12 +470,22 @@ class App(ctk.CTk):
             self._append(self._assign_log, "⚠  No URLs entered.")
             return
         self._assign_run_btn.configure(state="disabled", text="Running…")
+        self._assign_pause_btn.configure(state="normal")
+        self._resume_event.set()
         self._assign_log.configure(state="normal")
         self._assign_log.delete("1.0", "end")
         self._assign_log.configure(state="disabled")
         settings = {"set_in_gradebook": self._assign_gradebook_var.get()}
         dry_run = self._assign_dryrun.get()
         q = self._log_queue
+        resume = self._resume_event
+
+        def pause_fn():
+            if not resume.is_set():
+                q.put(("assign", "⏸  Paused — click Resume to continue..."))
+                resume.wait()
+                q.put(("assign", "▶  Resuming..."))
+
         def worker():
             class W:
                 def write(self, t):
@@ -445,13 +494,21 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 from browser import run_assignments
-                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings))
+                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn))
             except Exception as e:
                 q.put(("assign", f"✗  {e}"))
             finally:
                 sys.stdout = old
                 q.put(("assign", "__DONE__"))
         threading.Thread(target=worker, daemon=True).start()
+
+    def _toggle_assign_pause(self):
+        if self._resume_event.is_set():
+            self._resume_event.clear()
+            self._assign_pause_btn.configure(text="▶   RESUME", fg_color="#2a4a2a")
+        else:
+            self._resume_event.set()
+            self._assign_pause_btn.configure(text="⏸   PAUSE", fg_color="#555555")
 
     # ── Course Outline run ────────────────────────────────────────────────────
 

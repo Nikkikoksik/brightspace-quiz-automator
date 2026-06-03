@@ -144,33 +144,77 @@ async def save_quiz(page: Page, dry_run: bool):
 
 
 async def apply_assignment_gradebook(page: Page, dry_run: bool):
-    """Switch assignment from Not in Grade Book → In Grade Book."""
+    """Switch assignment from Not in Grade Book → In Grade Book (shadow DOM aware)."""
     try:
-        grade_btn = page.locator("button.d2l-grade-info").first
-        if not await grade_btn.count():
-            print("    Gradebook : not found — skipping")
+        await page.wait_for_timeout(800)
+
+        info = await page.evaluate("""
+            () => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('button.d2l-grade-info, button[class*="grade-info"]')) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0)
+                            return { x: r.left + r.width / 2, y: r.top + r.height / 2,
+                                     text: el.innerText || el.textContent || '' };
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }
+        """)
+
+        if not info:
+            print("    Gradebook : grade info button not found in DOM/shadow DOM — skipping")
             return
-        div_text = await grade_btn.locator("div").first.inner_text()
-        if "Not in Grade Book" in div_text:
-            if dry_run:
-                print("    Gradebook : [DRY RUN] Would switch to In Grade Book")
-                return
-            print("    Gradebook : Not in Grade Book → switching...")
-            await grade_btn.click()
-            await page.wait_for_selector(
-                "d2l-menu-item[text='Add to Grade Book'], li:has-text('Add to Grade Book')",
-                timeout=5000,
-            )
-            option = page.locator(
-                "d2l-menu-item[text='Add to Grade Book'], li:has-text('Add to Grade Book')"
-            ).first
-            await option.click()
-            print("    Gradebook : ✓ Added to Grade Book")
-        else:
+
+        print(f"    Gradebook : found button text = {repr(info.get('text','').strip()[:80])}")
+        if "Not in Grade Book" not in info.get("text", ""):
             print("    Gradebook : already In Grade Book — skipping")
+            return
+
+        if dry_run:
+            print("    Gradebook : [DRY RUN] Would switch to In Grade Book")
+            return
+
+        print("    Gradebook : Not in Grade Book → switching...")
+        await page.mouse.click(info["x"], info["y"])
+        await page.wait_for_timeout(600)
+
+        option = await page.evaluate("""
+            () => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('d2l-menu-item, li, a, button')) {
+                        const t = (el.getAttribute('text') || el.textContent || '').trim();
+                        if (t === 'Add to Grade Book' || t.startsWith('Add to Grade Book')) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }
+        """)
+
+        if not option:
+            raise Exception("'Add to Grade Book' menu item not found after clicking grade button")
+
+        await page.mouse.click(option["x"], option["y"])
+        await page.wait_for_timeout(400)
+        print("    Gradebook : ✓ Added to Grade Book")
+
     except Exception as e:
         print(f"    Gradebook : ✗ {e}")
-        await page.keyboard.press("Escape")
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:
+            pass
         await page.wait_for_timeout(300)
 
 
