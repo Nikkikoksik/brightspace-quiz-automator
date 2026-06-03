@@ -26,7 +26,7 @@ COURSEBRIDGE_URL      = "https://lms.harshsaw.ca/content-converter"
 COURSEBRIDGE_EMAIL    = ""   # set via GUI — saved to outline_config.json
 COURSEBRIDGE_PASSWORD = ""   # set via GUI — saved to outline_config.json
 
-OUTLINE_SEARCH_TERMS = ["syllabus", "outline", "guideline"]
+OUTLINE_SEARCH_TERMS = ["outline"]
 SYLLABUS_TOPIC_NAME  = "Course Syllabus"
 
 _HERE = Path(__file__).parent
@@ -105,16 +105,42 @@ async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=i
             print(f"  Skipping '{title}'...")
             continue
 
-        # User confirmed — now download and open it
-        dl_btn = page.locator(
-            "a[download], a[href$='.pdf'], a[href$='.docx'], a[href$='.doc'], "
-            "a:has-text('Download'), button:has-text('Download'), [aria-label*='Download']"
-        ).first
+        # User confirmed — find Download button via shadow DOM and click via coordinates
+        print("  Looking for Download button...")
+        dl_coords = await page.evaluate("""
+            () => {
+                function walk(root) {
+                    for (const el of root.querySelectorAll('button, a, [role="button"]')) {
+                        const label = (
+                            el.getAttribute('aria-label') || el.getAttribute('title') ||
+                            el.textContent || ''
+                        ).toLowerCase().trim();
+                        if (label.includes('download')) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0 && r.height > 0)
+                                return { x: r.left + r.width/2, y: r.top + r.height/2, label };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
+                        if (el.tagName === 'IFRAME') {
+                            try {
+                                const ir = el.getBoundingClientRect();
+                                const c = walk(el.contentDocument);
+                                if (c) return { x: c.x + ir.left, y: c.y + ir.top, label: c.label };
+                            } catch(e) {}
+                        }
+                    }
+                    return null;
+                }
+                return walk(document);
+            }
+        """)
 
-        if await dl_btn.count():
-            print("  Clicking Download button...")
+        if dl_coords:
+            print(f"  ✓ Found '{dl_coords['label']}' at ({dl_coords['x']:.0f},{dl_coords['y']:.0f}) — clicking...")
             async with page.expect_download(timeout=30000) as dl_info:
-                await dl_btn.click()
+                await page.mouse.click(dl_coords["x"], dl_coords["y"])
             download = await dl_info.value
             raw_dest = download_dir / download.suggested_filename
             await download.save_as(raw_dest)
@@ -407,70 +433,44 @@ async def paste_html_to_syllabus(page: Page, html: str, course_id: str):
     edit = next((b for b in menu_items if b["label"].strip().lower() == "edit"), None)
     if not edit:
         raise RuntimeError("Could not find Edit option in the dropdown.")
-    print(f"  [4e] ✓ '{edit['label']}' at ({edit['x']},{edit['y']}) — clicking (new tab expected)...")
+    print(f"  [4e] ✓ '{edit['label']}' at ({edit['x']},{edit['y']}) — clicking...")
 
-    # 4f: Click Edit — opens new tab with the HTML editor
-    async with page.context.expect_page() as new_page_info:
-        await page.mouse.click(edit["x"], edit["y"])
-    edit_page = await new_page_info.value
+    # 4f: Click Edit — may open in same tab or new tab
+    edit_page = None
+    try:
+        async with page.context.expect_page(timeout=5000) as new_page_info:
+            await page.mouse.click(edit["x"], edit["y"])
+        edit_page = await new_page_info.value
+        print(f"  [4f] Opened in new tab: {edit_page.url}")
+    except Exception:
+        # Opened in same tab
+        edit_page = page
+        print("  [4f] Opened in same tab — waiting for page to load...")
     await edit_page.wait_for_load_state("domcontentloaded")
     await edit_page.wait_for_timeout(3000)
-    print(f"  [4f] ✓ Edit page opened: {edit_page.url}")
+    print(f"  [4f] ✓ Edit page ready: {edit_page.url}")
 
-    # 4g: Click Source Code button (aria-label="Source Code" confirmed from live HTML)
-    print("  [4g] Looking for Source Code button...")
-    source_btn = edit_page.locator('button[aria-label="Source Code"]').first
-    if await source_btn.count() and await source_btn.is_visible():
-        print("  [4g] ✓ Found via aria-label — clicking...")
-        await source_btn.click()
-    else:
-        print("  [4g] Not found via locator — shadow DOM walk...")
-        sc = await edit_page.evaluate("""
-            () => {
-                function walk(root) {
-                    for (const el of root.querySelectorAll('button')) {
-                        const lbl = el.getAttribute('aria-label') || el.getAttribute('title') || '';
-                        if (lbl === 'Source Code' || lbl === 'Source code') {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
-                        }
-                    }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
-                    }
-                    return null;
-                }
-                return walk(document);
+    # 4g: Set TinyMCE content directly via JS — skips Source Code dialog entirely.
+    #     TinyMCE exposes tinymce.activeEditor.setContent() in the page context.
+    print("  [4g] Setting editor content via TinyMCE API...")
+    result = await edit_page.evaluate("""
+        (html) => {
+            try {
+                if (typeof tinymce === 'undefined') return 'tinymce not found';
+                const ed = tinymce.activeEditor;
+                if (!ed) return 'no active editor';
+                ed.setContent(html);
+                return 'ok';
+            } catch(e) {
+                return 'error: ' + e.message;
             }
-        """)
-        if not sc:
-            raise RuntimeError("Could not find Source Code button in the editor.")
-        print(f"  [4g] ✓ Found at ({sc['x']:.0f},{sc['y']:.0f}) — clicking...")
-        await edit_page.mouse.click(sc["x"], sc["y"])
-    await edit_page.wait_for_timeout(800)
-
-    # 4h: Replace HTML in the Source Code dialog textarea
-    print("  [4h] Waiting for Source Code dialog...")
-    textarea = edit_page.locator("textarea").first
-    try:
-        await textarea.wait_for(timeout=10000)
-    except Exception:
-        raise RuntimeError("Source Code dialog did not open — textarea not found.")
-    print(f"  [4h] ✓ Textarea ready — replacing with {len(html):,} chars...")
-    await textarea.click()
-    await edit_page.keyboard.press("Control+a")
-    await edit_page.keyboard.press("Delete")
-    await textarea.fill(html)
-    await edit_page.wait_for_timeout(400)
-
-    # 4i: Click OK to close dialog
-    print("  [4i] Clicking OK...")
-    ok_btn = edit_page.locator("button:has-text('OK'), button:has-text('Save')").first
-    if not await ok_btn.count():
-        raise RuntimeError("Could not find OK button in Source Code dialog.")
-    await ok_btn.click()
-    await edit_page.wait_for_timeout(600)
-    print("  [4i] ✓ Dialog closed")
+        }
+    """, html)
+    print(f"  [4g] TinyMCE result: {result}")
+    if result != "ok":
+        raise RuntimeError(f"Could not set TinyMCE content: {result}")
+    await edit_page.wait_for_timeout(500)
+    print("  [4g] ✓ Content set")
 
     # 4j: Save topic (shadow DOM — d2l-button)
     print("  [4j] Looking for Save button...")
@@ -494,13 +494,41 @@ async def paste_html_to_syllabus(page: Page, html: str, course_id: str):
         }
     """)
     if save:
-        print(f"  [4j] ✓ Found Save at ({save['x']:.0f},{save['y']:.0f}) — clicking...")
+        print(f"  [4j] ✓ Found Save at ({save['x']:.0f},{save['y']:.0f}) — clicking (closes dialog)...")
         await edit_page.mouse.click(save["x"], save["y"])
     else:
         print("  [4j] Falling back to locator...")
         await edit_page.locator("button:has-text('Save')").last.click()
-    await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
-    print("  ✓ Course Syllabus updated successfully!")
+
+    # Wait for dialog to close, then click the topic page Save
+    await edit_page.wait_for_timeout(2000)
+    print("  [4k] Dialog closed — looking for topic page Save button...")
+    save2 = await edit_page.evaluate("""
+        () => {
+            function walk(root) {
+                for (const el of root.querySelectorAll('button, d2l-button')) {
+                    const text = (el.textContent || '').trim();
+                    const lbl  = el.getAttribute('aria-label') || '';
+                    if (text === 'Save' || lbl === 'Save') {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
+                }
+                return null;
+            }
+            return walk(document);
+        }
+    """)
+    if save2:
+        print(f"  [4k] ✓ Found page Save at ({save2['x']:.0f},{save2['y']:.0f}) — clicking...")
+        await edit_page.mouse.click(save2["x"], save2["y"])
+        await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
+        print("  ✓ Course Syllabus saved successfully!")
+    else:
+        print("  [4k] No second Save found — dialog Save may have saved directly")
 
 
 # ── CRN → course ID lookup ────────────────────────────────────────────────────
@@ -663,6 +691,70 @@ async def run(
         await paste_html_to_syllabus(page, html, course_id=course_id)
 
         print("\n✓ All done!")
+        await browser.close()
+
+
+# ── Step 4 standalone test ────────────────────────────────────────────────────
+async def test_step4(course_url: str = ""):
+    """Test only Step 4: read existing coursebridge_preview.html and paste into Brightspace."""
+    preview_path = _HERE / "coursebridge_preview.html"
+    if not preview_path.exists():
+        raise RuntimeError(
+            "coursebridge_preview.html not found. Run Steps 1-3 first to generate it."
+        )
+
+    html = preview_path.read_text(encoding="utf-8")
+    print(f"Loaded HTML from {preview_path.name} ({len(html):,} chars)")
+
+    _course_url = course_url or COURSE_URL
+    if not _course_url:
+        raise RuntimeError("Course CRN or URL is required.")
+
+    match = re.search(r'/(?:le|content|lessons|quizzing|home)/(\d+)', _course_url)
+    if match:
+        course_id = match.group(1)
+    elif re.fullmatch(r'\d{4,6}', _course_url.strip()):
+        course_id = None  # resolved after login
+    else:
+        raise RuntimeError(f"Could not extract course ID from: {_course_url}")
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        context = await browser.new_context(
+            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None
+        )
+        page = await context.new_page()
+
+        print("Opening Brightspace...")
+        await page.goto(BRIGHTSPACE_BASE)
+        print("Waiting for login (log in if prompted)...")
+        for i in range(180):
+            await page.wait_for_timeout(3000)
+            url = page.url
+            if "learn.okanagancollege.ca" in url and "microsoftonline.com" not in url:
+                try:
+                    await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home", timeout=15000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    await page.wait_for_timeout(2000)
+                except Exception:
+                    pass
+                if "learn.okanagancollege.ca" in page.url and "microsoftonline.com" not in page.url:
+                    break
+            if i % 10 == 0 and i > 0:
+                print(f"  Still waiting... ({i * 3}s)")
+        else:
+            raise RuntimeError("Login timed out")
+
+        await page.wait_for_load_state("networkidle", timeout=20000)
+        await context.storage_state(path=BS_SESSION_FILE)
+        print("✓ Logged in")
+
+        if course_id is None:
+            course_id = await find_course_id_by_crn(page, _course_url.strip())
+
+        await paste_html_to_syllabus(page, html, course_id=course_id)
+
+        print("\n✓ Step 4 test complete!")
         await browser.close()
 
 

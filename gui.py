@@ -192,7 +192,19 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_outline_run,
         )
-        self._outline_run_btn.pack(fill="x", pady=(0, 18))
+        self._outline_run_btn.pack(fill="x", pady=(0, 8))
+
+        ctk.CTkLabel(body, text="TEST INDIVIDUAL STEPS",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="gray").pack(anchor="w", pady=(8, 4))
+
+        self._test_step4_btn = ctk.CTkButton(
+            body, text="▶   TEST STEP 4 ONLY  (paste existing HTML into Brightspace)",
+            height=38, font=ctk.CTkFont(size=13),
+            fg_color="#2a4a2a", hover_color="#3a6a3a",
+            command=self._start_test_step4,
+        )
+        self._test_step4_btn.pack(fill="x", pady=(0, 18))
 
         ctk.CTkLabel(body, text="LOG",
                      font=ctk.CTkFont(size=11, weight="bold"),
@@ -376,6 +388,42 @@ class App(ctk.CTk):
             finally:
                 sys.stdout = old
                 q.put(("outline", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ── Test Step 4 ───────────────────────────────────────────────────────────
+
+    def _start_test_step4(self):
+        course_url = self._outline_url.get().strip()
+        if not course_url:
+            self._append(self._outline_log, "⚠  Course URL or CRN is required.")
+            return
+
+        self._test_step4_btn.configure(state="disabled", text="Running…")
+        self._outline_log.configure(state="normal")
+        self._outline_log.delete("1.0", "end")
+        self._outline_log.configure(state="disabled")
+
+        q = self._log_queue
+
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("outline", t.rstrip()))
+                def flush(self): pass
+
+            old, sys.stdout = sys.stdout, W()
+            try:
+                from course_outline_automator import test_step4
+                asyncio.run(test_step4(course_url=course_url))
+            except Exception as e:
+                q.put(("outline", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                self.after(0, lambda: self._test_step4_btn.configure(
+                    state="normal",
+                    text="▶   TEST STEP 4 ONLY  (paste existing HTML into Brightspace)"
+                ))
 
         threading.Thread(target=worker, daemon=True).start()
 
