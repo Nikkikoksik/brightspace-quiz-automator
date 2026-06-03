@@ -1,6 +1,49 @@
 from playwright.async_api import Page
 
 
+async def _set_points_if_zero(page: Page):
+    """After Add to Grade Book, set points to 10 if the field shows 0 or is empty."""
+    fixed = await page.evaluate("""
+        () => {
+            function fix(root) {
+                for (const inp of root.querySelectorAll('input[type="number"]')) {
+                    const r = inp.getBoundingClientRect();
+                    if (r.width > 0 && (inp.value === '0' || inp.value === '')) {
+                        inp.value = '10';
+                        inp.dispatchEvent(new Event('input',  { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                }
+                // also handle d2l-input-number web component
+                for (const el of root.querySelectorAll('d2l-input-number')) {
+                    const r = el.getBoundingClientRect();
+                    const val = parseFloat(el.getAttribute('value') || el.value || '0');
+                    if (r.width > 0 && (isNaN(val) || val === 0)) {
+                        el.setAttribute('value', '10');
+                        if (el.shadowRoot) {
+                            const inner = el.shadowRoot.querySelector('input');
+                            if (inner) {
+                                inner.value = '10';
+                                inner.dispatchEvent(new Event('input',  { bubbles: true }));
+                                inner.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        }
+                        return true;
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { if (fix(el.shadowRoot)) return true; }
+                }
+                return false;
+            }
+            return fix(document);
+        }
+    """)
+    if fixed:
+        print("    Gradebook : set points to 10 (was 0)")
+
+
 async def apply_gradebook(page: Page, dry_run: bool):
     """Switch quiz from Not in Grade Book → In Grade Book."""
     try:
@@ -31,6 +74,8 @@ async def apply_gradebook(page: Page, dry_run: bool):
                 "d2l-menu-item[text='Add to Grade Book'], li:has-text('Add to Grade Book')"
             ).first
             await option.click()
+            await page.wait_for_timeout(800)
+            await _set_points_if_zero(page)
             print("    Gradebook : ✓ Added to Grade Book")
         else:
             print("    Gradebook : already In Grade Book — skipping")
@@ -236,7 +281,8 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
             raise Exception("'Add to Grade Book' menu item not found after clicking grade button")
 
         await page.mouse.click(option["x"], option["y"])
-        await page.wait_for_timeout(400)
+        await page.wait_for_timeout(800)
+        await _set_points_if_zero(page)
         print("    Gradebook : ✓ Added to Grade Book")
 
     except Exception as e:
