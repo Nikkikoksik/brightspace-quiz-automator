@@ -4,6 +4,11 @@ from playwright.async_api import Page
 async def apply_gradebook(page: Page, dry_run: bool):
     """Switch quiz from Not in Grade Book → In Grade Book."""
     try:
+        try:
+            await page.wait_for_selector("button.d2l-grade-info", timeout=10000)
+        except Exception:
+            pass
+
         grade_btn = page.locator("button.d2l-grade-info").first
 
         if not await grade_btn.count():
@@ -151,11 +156,21 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
         info = await page.evaluate("""
             () => {
                 function find(root) {
-                    for (const el of root.querySelectorAll('button.d2l-grade-info, button[class*="grade-info"]')) {
+                    // Search by class first
+                    for (const el of root.querySelectorAll('button.d2l-grade-info, button[class*="grade-info"], [class*="grade-info"]')) {
                         const r = el.getBoundingClientRect();
                         if (r.width > 0)
                             return { x: r.left + r.width / 2, y: r.top + r.height / 2,
                                      text: el.innerText || el.textContent || '' };
+                    }
+                    // Fall back: any visible element whose text contains "Not in Grade Book"
+                    for (const el of root.querySelectorAll('button, a, [role="button"], d2l-button, select')) {
+                        const t = el.innerText || el.textContent || '';
+                        if (t.includes('Not in Grade Book')) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0)
+                                return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: t };
+                        }
                     }
                     for (const el of root.querySelectorAll('*')) {
                         if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
