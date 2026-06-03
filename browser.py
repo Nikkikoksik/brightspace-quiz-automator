@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-from navigation import get_quiz_names, open_quiz_edit
-from actions import apply_gradebook, apply_auto_submit, save_quiz
+from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit
+from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment
 
 SESSION_FILE = str(Path(__file__).parent / "session.json")
 
@@ -83,6 +83,85 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                 if settings.get("set_auto_submit"):
                     await apply_auto_submit(page, dry_run)
                 await save_quiz(page, dry_run)
+
+        print(f"\n{'─' * 50}")
+        print("✓  All done!")
+        await browser.close()
+
+
+async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None):
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=False, slow_mo=80,
+            args=["--start-maximized"],
+        )
+        context = await browser.new_context(
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
+        )
+        page = await context.new_page()
+
+        print("Opening Brightspace...")
+        await page.goto("https://learn.okanagancollege.ca")
+        print("─" * 50)
+        print("  Log in with your Okanagan College account.")
+        print("  Complete any MFA steps (email code, authenticator, etc.).")
+        print("  The script will continue automatically once you are on")
+        print("  the Brightspace home page.")
+        print("─" * 50)
+
+        for i in range(180):
+            await page.wait_for_timeout(3000)
+            url = page.url
+            on_bs = "learn.okanagancollege.ca" in url
+            on_ms = "microsoftonline.com" in url or "login.microsoft" in url
+            on_login = "/d2l/lp/auth" in url or "/login" in url
+            if on_bs and not on_ms and not on_login:
+                break
+            if i % 10 == 0 and i > 0:
+                print(f"  Still waiting... ({i * 3}s)  |  {url[:80]}")
+        else:
+            raise RuntimeError("Login timed out after 9 minutes")
+
+        print("✓ Logged in — saving session...")
+        await page.wait_for_load_state("networkidle", timeout=20000)
+        await context.storage_state(path=SESSION_FILE)
+        print("✓ Session saved")
+
+        for course_url in urls:
+            print(f"\n{'─' * 50}")
+            print(f"Course: {course_url}")
+
+            try:
+                await page.goto(course_url, wait_until="commit")
+            except Exception:
+                pass
+            await page.wait_for_load_state("networkidle")
+
+            if dry_run:
+                print("⚠  DRY RUN MODE — nothing will be saved")
+
+            names = await get_assignment_names(page)
+            if not names:
+                print("✗ No assignments found.")
+                continue
+
+            if limit:
+                names = names[:limit]
+
+            print(f"Found {len(names)} assignment(s). Starting...")
+
+            for i, name in enumerate(names, 1):
+                print(f"\n[{i}/{len(names)}]  [{name}]")
+                try:
+                    await page.goto(course_url, wait_until="commit")
+                except Exception:
+                    pass
+                await page.wait_for_load_state("networkidle")
+                await open_assignment_edit(page, name)
+                if settings.get("set_in_gradebook"):
+                    await apply_assignment_gradebook(page, dry_run)
+                await save_assignment(page, dry_run)
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")

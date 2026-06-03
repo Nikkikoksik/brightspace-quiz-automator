@@ -46,17 +46,20 @@ async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=i
     print("  Fetching content list from Brightspace API...")
     toc = None
     for api_ver in ["1.70", "1.67", "1.68", "1.69"]:
-        toc = await page.evaluate(f"""
+        result = await page.evaluate(f"""
             async () => {{
                 try {{
                     const r = await fetch(
                         '{BRIGHTSPACE_BASE}/d2l/api/le/{api_ver}/{course_id}/content/toc'
                     );
-                    if (!r.ok) return null;
-                    return await r.json();
-                }} catch(e) {{ return null; }}
+                    if (!r.ok) return {{ status: r.status, data: null }};
+                    return {{ status: r.status, data: await r.json() }};
+                }} catch(e) {{ return {{ status: -1, error: e.toString() }}; }}
             }}
         """)
+        status = result.get("status") if result else -1
+        print(f"  API v{api_ver}: HTTP {status}")
+        toc = result.get("data") if result else None
         if toc:
             print(f"  ✓ API v{api_ver}")
             break
@@ -84,7 +87,38 @@ async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=i
         if not matches:
             print("  No topics matched search terms")
     else:
-        print("  ✗ API unavailable")
+        print("  ✗ API unavailable — scraping content page DOM...")
+        terms_js = str(OUTLINE_SEARCH_TERMS).lower()
+        links = await page.evaluate(f"""
+            () => {{
+                const terms = {terms_js};
+                const results = [];
+                function walk(root) {{
+                    for (const a of root.querySelectorAll('a[href]')) {{
+                        const text = (a.textContent || '').trim();
+                        const href = a.getAttribute('href') || '';
+                        if (text && terms.some(t => text.toLowerCase().includes(t))) {{
+                            results.push({{ text, href: a.href || href }});
+                        }}
+                    }}
+                    for (const el of root.querySelectorAll('*')) {{
+                        if (el.shadowRoot) walk(el.shadowRoot);
+                    }}
+                }}
+                walk(document);
+                return results;
+            }}
+        """)
+        print(f"  Found {len(links)} matching link(s) on content page")
+        seen = set()
+        for lnk in links:
+            href = lnk.get("href", "")
+            text = lnk.get("text", "")
+            if href and href not in seen:
+                seen.add(href)
+                full_url = href if href.startswith("http") else BRIGHTSPACE_BASE + href
+                matches.append((text, full_url))
+                print(f"    Candidate: {text}")
 
     download_dir = _HERE / "downloads"
     download_dir.mkdir(exist_ok=True)
@@ -217,9 +251,13 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
     """Upload docx to CourseBridge (doc→HTML converter), return HTML string."""
     print("\nStep 3 — CourseBridge conversion...")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=60)
+        browser = await p.chromium.launch(
+            headless=False, slow_mo=60,
+            args=["--start-maximized"],
+        )
         context = await browser.new_context(
-            storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None
+            storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None,
+            no_viewport=True,
         )
         await context.grant_permissions(["clipboard-read", "clipboard-write"])
         page = await context.new_page()
@@ -529,6 +567,7 @@ async def paste_html_to_syllabus(page: Page, html: str, course_id: str):
         print("  ✓ Course Syllabus saved successfully!")
     else:
         print("  [4k] No second Save found — dialog Save may have saved directly")
+    await edit_page.close()
 
 
 # ── CRN → course ID lookup ────────────────────────────────────────────────────
@@ -582,6 +621,27 @@ async def find_course_id_by_crn(page, crn: str) -> str:
     )
 
 
+# ── Downloads cleanup ────────────────────────────────────────────────────────
+def _maybe_clear_downloads(prompt_fn=input):
+    download_dir = _HERE / "downloads"
+    files = list(download_dir.iterdir()) if download_dir.exists() else []
+    if not files:
+        return
+    answer = prompt_fn(
+        f"Clear the downloads folder? ({len(files)} file(s) inside)\n\n"
+        "Click Yes to delete them, No to keep them. (y/n)"
+    ).strip().lower()
+    if answer == "y":
+        for f in files:
+            try:
+                f.unlink()
+            except Exception:
+                pass
+        print(f"  ✓ Downloads cleared ({len(files)} file(s) deleted)")
+    else:
+        print("  Downloads kept")
+
+
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 async def run(
     dry_run: bool = False,
@@ -599,9 +659,13 @@ async def run(
         sys.exit(1)
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(
+            headless=False, slow_mo=80,
+            args=["--start-maximized"],
+        )
         context = await browser.new_context(
-            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None
+            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
 
@@ -614,23 +678,15 @@ async def run(
         print("  that you are on the Brightspace home page.")
         print("─" * 50)
 
-        # Poll until we are fully on Brightspace (not Microsoft/redirecting)
+        # Poll until fully on Brightspace — never navigate, just watch the URL
         for i in range(180):   # up to 9 minutes
             await page.wait_for_timeout(3000)
             url = page.url
-            on_bs   = "learn.okanagancollege.ca" in url
-            on_ms   = "microsoftonline.com" in url or "login.microsoft" in url
-            if on_bs and not on_ms:
-                # One more check: navigate explicitly to /d2l/home to confirm
-                try:
-                    await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home", timeout=15000)
-                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                    await page.wait_for_timeout(2000)
-                except Exception:
-                    pass
-                final_url = page.url
-                if "learn.okanagancollege.ca" in final_url and "microsoftonline.com" not in final_url:
-                    break
+            on_bs = "learn.okanagancollege.ca" in url
+            on_ms = "microsoftonline.com" in url or "login.microsoft" in url
+            on_login = "/d2l/lp/auth" in url or "/login" in url
+            if on_bs and not on_ms and not on_login:
+                break
             if i % 10 == 0 and i > 0:
                 print(f"  Still waiting for login... ({i * 3}s elapsed)  |  current: {url[:80]}")
         else:
@@ -656,7 +712,10 @@ async def run(
 
         content_url = f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
         print(f"Navigating to Content tab...")
-        await page.goto(content_url)
+        try:
+            await page.goto(content_url, wait_until="commit")
+        except Exception:
+            pass
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(5000)
 
@@ -685,12 +744,16 @@ async def run(
             await browser.close()
             return
 
-        await page.goto(content_url)
+        try:
+            await page.goto(content_url, wait_until="commit")
+        except Exception:
+            pass
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(2000)
         await paste_html_to_syllabus(page, html, course_id=course_id)
 
         print("\n✓ All done!")
+        _maybe_clear_downloads(prompt_fn)
         await browser.close()
 
 

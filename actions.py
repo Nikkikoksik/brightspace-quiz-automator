@@ -141,3 +141,67 @@ async def save_quiz(page: Page, dry_run: bool):
         print("    Save      : ✓")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
+
+
+async def apply_assignment_gradebook(page: Page, dry_run: bool):
+    """Switch assignment from Not in Grade Book → In Grade Book."""
+    try:
+        grade_btn = page.locator("button.d2l-grade-info").first
+        if not await grade_btn.count():
+            print("    Gradebook : not found — skipping")
+            return
+        div_text = await grade_btn.locator("div").first.inner_text()
+        if "Not in Grade Book" in div_text:
+            if dry_run:
+                print("    Gradebook : [DRY RUN] Would switch to In Grade Book")
+                return
+            print("    Gradebook : Not in Grade Book → switching...")
+            await grade_btn.click()
+            await page.wait_for_selector(
+                "d2l-menu-item[text='Add to Grade Book'], li:has-text('Add to Grade Book')",
+                timeout=5000,
+            )
+            option = page.locator(
+                "d2l-menu-item[text='Add to Grade Book'], li:has-text('Add to Grade Book')"
+            ).first
+            await option.click()
+            print("    Gradebook : ✓ Added to Grade Book")
+        else:
+            print("    Gradebook : already In Grade Book — skipping")
+    except Exception as e:
+        print(f"    Gradebook : ✗ {e}")
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
+
+
+async def save_assignment(page: Page, dry_run: bool):
+    """Save the assignment edit page."""
+    if dry_run:
+        print("    Save      : [DRY RUN] Would click Save and Close")
+        return
+    try:
+        coords = await page.evaluate("""
+            () => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('button, d2l-button')) {
+                        const t = el.textContent.trim();
+                        if (t === 'Save and Close' || t === 'Save') {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }
+        """)
+        if not coords:
+            raise Exception("Save button not found in shadow DOM")
+        await page.mouse.click(coords["x"], coords["y"])
+        await page.wait_for_load_state("networkidle", timeout=12000)
+        print("    Save      : ✓")
+    except Exception as e:
+        print(f"    Save      : ✗ {e}")

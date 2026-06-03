@@ -73,9 +73,11 @@ class App(ctk.CTk):
         tabs = ctk.CTkTabview(self)
         tabs.pack(fill="both", expand=True, padx=16, pady=(8, 16))
         tabs.add("Quiz Automator")
+        tabs.add("Assignment Automator")
         tabs.add("Course Outline")
 
         self._build_quiz_tab(tabs.tab("Quiz Automator"))
+        self._build_assignment_tab(tabs.tab("Assignment Automator"))
         self._build_outline_tab(tabs.tab("Course Outline"))
 
     # ── Quiz Automator tab ───────────────────────────────────────────────────
@@ -133,6 +135,77 @@ class App(ctk.CTk):
             font=ctk.CTkFont(family="Courier New", size=12),
         )
         self._quiz_log.pack(fill="x")
+
+    # ── Assignment Automator tab ─────────────────────────────────────────────
+
+    def _build_assignment_tab(self, parent):
+        body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        body.pack(fill="both", expand=True)
+
+        ctk.CTkLabel(body, text="ASSIGNMENT PAGE URLS",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="gray").pack(anchor="w", pady=(8, 4))
+
+        self._assign_urls_container = ctk.CTkFrame(body)
+        self._assign_urls_container.pack(fill="x", pady=(0, 6))
+        self._assign_url_rows = []
+
+        ctk.CTkButton(
+            body, text="＋  Add assignment page URL", height=32,
+            fg_color="transparent", border_width=1,
+            command=self._add_assign_url_row,
+        ).pack(anchor="w", pady=(0, 18))
+
+        ctk.CTkLabel(body, text="SETTINGS",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="gray").pack(anchor="w", pady=(0, 4))
+
+        sf = ctk.CTkFrame(body)
+        sf.pack(fill="x", pady=(0, 18))
+
+        self._assign_gradebook_var = ctk.BooleanVar(value=True)
+        self._assign_dryrun        = ctk.BooleanVar(value=False)
+
+        ctk.CTkCheckBox(sf, text="Add to Grade Book",
+                        variable=self._assign_gradebook_var).pack(anchor="w", padx=16, pady=(14, 4))
+        ctk.CTkCheckBox(sf, text="Dry run  (preview only — nothing will be saved)",
+                        variable=self._assign_dryrun,
+                        text_color="#f0a500").pack(anchor="w", padx=16, pady=(4, 14))
+
+        self._assign_run_btn = ctk.CTkButton(
+            body, text="▶   RUN ASSIGNMENT AUTOMATOR", height=52,
+            font=ctk.CTkFont(size=17, weight="bold"),
+            command=self._start_assignment_run,
+        )
+        self._assign_run_btn.pack(fill="x", pady=(0, 18))
+
+        ctk.CTkLabel(body, text="LOG",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="gray").pack(anchor="w", pady=(0, 4))
+
+        self._assign_log = ctk.CTkTextbox(
+            body, height=200, state="disabled",
+            font=ctk.CTkFont(family="Courier New", size=12),
+        )
+        self._assign_log.pack(fill="x")
+        self._add_assign_url_row()
+
+    def _add_assign_url_row(self, url=""):
+        row = ctk.CTkFrame(self._assign_urls_container, fg_color="transparent")
+        row.pack(fill="x", padx=10, pady=5)
+        entry = ctk.CTkEntry(row, placeholder_text="Paste assignment page URL here…", height=38)
+        entry.pack(side="left", fill="x", expand=True)
+        if url:
+            entry.insert(0, url)
+        def remove():
+            self._assign_url_rows = [(f, e) for f, e in self._assign_url_rows if f is not row]
+            row.destroy()
+        ctk.CTkButton(
+            row, text="✕", width=38, height=38,
+            fg_color="transparent", text_color="gray",
+            hover_color="#3a3a3a", command=remove,
+        ).pack(side="left", padx=(6, 0))
+        self._assign_url_rows.append((row, entry))
 
     # ── Course Outline tab ───────────────────────────────────────────────────
 
@@ -292,10 +365,17 @@ class App(ctk.CTk):
             while True:
                 item = self._log_queue.get_nowait()
                 tag, msg = item
-                box = self._quiz_log if tag == "quiz" else self._outline_log
+                if tag == "quiz":
+                    box = self._quiz_log
+                elif tag == "assign":
+                    box = self._assign_log
+                else:
+                    box = self._outline_log
                 if msg == "__DONE__":
                     if tag == "quiz":
                         self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
+                    elif tag == "assign":
+                        self._assign_run_btn.configure(state="normal", text="▶   RUN ASSIGNMENT AUTOMATOR")
                     else:
                         self._outline_run_btn.configure(state="normal", text="▶   RUN COURSE OUTLINE AUTOMATOR")
                 else:
@@ -341,6 +421,36 @@ class App(ctk.CTk):
                 sys.stdout = old
                 q.put(("quiz", "__DONE__"))
 
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ── Assignment run ────────────────────────────────────────────────────────
+
+    def _start_assignment_run(self):
+        urls = [e.get().strip() for _, e in self._assign_url_rows if e.get().strip()]
+        if not urls:
+            self._append(self._assign_log, "⚠  No URLs entered.")
+            return
+        self._assign_run_btn.configure(state="disabled", text="Running…")
+        self._assign_log.configure(state="normal")
+        self._assign_log.delete("1.0", "end")
+        self._assign_log.configure(state="disabled")
+        settings = {"set_in_gradebook": self._assign_gradebook_var.get()}
+        dry_run = self._assign_dryrun.get()
+        q = self._log_queue
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("assign", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                from browser import run_assignments
+                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings))
+            except Exception as e:
+                q.put(("assign", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("assign", "__DONE__"))
         threading.Thread(target=worker, daemon=True).start()
 
     # ── Course Outline run ────────────────────────────────────────────────────

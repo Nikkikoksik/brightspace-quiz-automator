@@ -37,6 +37,13 @@ if not exist ".playwright_installed" (
     echo installed > .playwright_installed
 )
 
+:: Kill previous instance if running
+if exist gui.pid (
+    set /p OLD_PID=<gui.pid
+    taskkill /F /T /PID %OLD_PID% >nul 2>&1
+    del gui.pid >nul 2>&1
+)
+
 :: Check for updates
 %PY% auto_update.py
 
