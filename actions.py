@@ -167,9 +167,10 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
         """)
 
         if not info:
-            print("    Gradebook : grade info button not found — skipping")
+            print("    Gradebook : grade info button not found in DOM/shadow DOM — skipping")
             return
 
+        print(f"    Gradebook : found button text = {repr(info.get('text','').strip()[:80])}")
         if "Not in Grade Book" not in info.get("text", ""):
             print("    Gradebook : already In Grade Book — skipping")
             return
