@@ -138,7 +138,6 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 pass
             await page.wait_for_load_state("networkidle")
             await page.wait_for_timeout(1500)
-            print(f"  Page URL : {page.url[:100]}")
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
@@ -163,7 +162,6 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 await page.wait_for_load_state("networkidle")
                 await page.wait_for_timeout(1000)
                 await open_assignment_edit(page, name)
-                print(f"  Edit URL : {page.url[:100]}")
                 if settings.get("set_in_gradebook"):
                     await apply_assignment_gradebook(page, dry_run)
                 await save_assignment(page, dry_run)
