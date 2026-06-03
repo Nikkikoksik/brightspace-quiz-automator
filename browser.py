@@ -54,7 +54,10 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             print(f"\n{'─' * 50}")
             print(f"Course: {course_url}")
 
-            await page.goto(course_url)
+            try:
+                await page.goto(course_url, wait_until="commit")
+            except Exception:
+                pass
             print("Waiting for quizzes page...")
             await page.wait_for_url("**/quizzing/**", timeout=60000)
             await page.wait_for_load_state("networkidle")
@@ -75,7 +78,10 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
 
             for i, name in enumerate(names, 1):
                 print(f"\n[{i}/{len(names)}]  [{name}]")
-                await page.goto(course_url)
+                try:
+                    await page.goto(course_url, wait_until="commit")
+                except Exception:
+                    pass
                 await page.wait_for_load_state("networkidle")
                 await open_quiz_edit(page, name)
                 if settings.get("set_in_gradebook"):
