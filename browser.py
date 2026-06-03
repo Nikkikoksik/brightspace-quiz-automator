@@ -8,7 +8,7 @@ from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignm
 SESSION_FILE = str(Path(__file__).parent / "session.json")
 
 
-async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None):
+async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, start_from: int = 1):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
         context = await browser.new_context(
@@ -71,13 +71,17 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                 print("✗ No quizzes found.")
                 continue
 
+            total = len(names)
             if limit:
                 names = names[:limit]
+            if start_from > 1:
+                names = names[start_from - 1:]
+                print(f"Found {total} quiz(es). Resuming from #{start_from}...")
+            else:
+                print(f"Found {total} quiz(es). Starting...")
 
-            print(f"Found {len(names)} quiz(es). Starting...")
-
-            for i, name in enumerate(names, 1):
-                print(f"\n[{i}/{len(names)}]  [{name}]")
+            for i, name in enumerate(names, start_from):
+                print(f"\n[{i}/{total}]  [{name}]")
                 try:
                     await page.goto(course_url, wait_until="commit")
                 except Exception:
@@ -99,7 +103,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
         await browser.close()
 
 
-async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None):
+async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, start_from: int = 1):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False, slow_mo=80,
@@ -159,13 +163,17 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 print("✗ No assignments found — check the URL points to the Assignments list page.")
                 continue
 
+            total = len(names)
             if limit:
                 names = names[:limit]
+            if start_from > 1:
+                names = names[start_from - 1:]
+                print(f"Found {total} assignment(s). Resuming from #{start_from}...")
+            else:
+                print(f"Found {total} assignment(s). Starting...")
 
-            print(f"Found {len(names)} assignment(s). Starting...")
-
-            for i, name in enumerate(names, 1):
-                print(f"\n[{i}/{len(names)}]  [{name}]")
+            for i, name in enumerate(names, start_from):
+                print(f"\n[{i}/{total}]  [{name}]")
                 try:
                     await page.goto(course_url, wait_until="commit")
                 except Exception:
