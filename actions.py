@@ -60,7 +60,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
 
         # Wait for Timer Settings link to appear
         try:
-            await page.wait_for_selector("text=Timer Settings", timeout=10000)
+            await page.wait_for_selector("text=Timer Settings", timeout=30000)
         except Exception:
             pass
 
@@ -77,7 +77,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         await timer_link.click()
         await page.wait_for_selector(
             "input[type='radio'][name='timeLimitOption'][value='autosubmit']",
-            timeout=6000,
+            timeout=30000,
         )
         await page.locator(
             "input[type='radio'][name='timeLimitOption'][value='autosubmit']"
@@ -118,7 +118,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                 }
                 return !hasOk(document);
             }
-        """, timeout=8000)
+        """, timeout=30000)
         print("    Timer     : ✓ auto-submit selected")
 
     except Exception as e:
