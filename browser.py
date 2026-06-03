@@ -82,7 +82,9 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                     await page.goto(course_url, wait_until="commit")
                 except Exception:
                     pass
-                await page.wait_for_load_state("networkidle")
+                await page.wait_for_selector(
+                    "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
+                )
                 await open_quiz_edit(page, name)
                 if settings.get("set_in_gradebook"):
                     await apply_gradebook(page, dry_run)
