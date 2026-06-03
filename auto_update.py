@@ -1,0 +1,119 @@
+"""
+Auto-updater: checks GitHub for a newer version and downloads it if available.
+Called by run.bat on every launch. Requires no Git installation.
+"""
+
+import json
+import os
+import shutil
+import sys
+import urllib.request
+import zipfile
+from pathlib import Path
+
+REPO     = "Nikkikoksik/brightspace-quiz-automator"
+API_URL  = f"https://api.github.com/repos/{REPO}/commits/main"
+ZIP_URL  = f"https://github.com/{REPO}/archive/refs/heads/main.zip"
+HERE     = Path(__file__).parent
+VERSION  = HERE / ".version"
+
+# Files that should never be overwritten by an update
+PROTECTED = {
+    "session.json", "cb_session.json", "bs_session.json",
+    "outline_config.json", "courses.txt", ".version",
+    ".playwright_installed", "coursebridge_preview.html",
+}
+
+
+def get_remote_sha() -> str | None:
+    try:
+        req = urllib.request.Request(API_URL, headers={"User-Agent": "brightspace-updater"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())["sha"]
+    except Exception:
+        return None
+
+
+def get_local_sha() -> str:
+    try:
+        return VERSION.read_text().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def download_and_extract(sha: str):
+    zip_path = HERE / "_update.zip"
+    tmp_dir  = HERE / "_update_tmp"
+
+    print("  Downloading update...")
+    try:
+        urllib.request.urlretrieve(ZIP_URL, zip_path)
+    except Exception as e:
+        print(f"  Download failed: {e}")
+        return False
+
+    print("  Extracting...")
+    try:
+        with zipfile.ZipFile(zip_path, "r") as z:
+            z.extractall(tmp_dir)
+    except Exception as e:
+        print(f"  Extraction failed: {e}")
+        return False
+
+    # Extracted folder is named "brightspace-quiz-automator-main"
+    src = tmp_dir / "brightspace-quiz-automator-main"
+    if not src.exists():
+        print("  Unexpected ZIP structure — skipping update")
+        return False
+
+    print("  Installing new files...")
+    for item in src.rglob("*"):
+        rel = item.relative_to(src)
+        if rel.parts[0] in PROTECTED or rel.name in PROTECTED:
+            continue
+        dest = HERE / rel
+        if item.is_dir():
+            dest.mkdir(parents=True, exist_ok=True)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, dest)
+
+    VERSION.write_text(sha)
+    return True
+
+
+def cleanup():
+    for path in [HERE / "_update.zip", HERE / "_update_tmp"]:
+        if path.exists():
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+
+
+def main():
+    print("Checking for updates...")
+    remote_sha = get_remote_sha()
+
+    if remote_sha is None:
+        print("  Could not reach GitHub — skipping update check")
+        return
+
+    local_sha = get_local_sha()
+
+    if remote_sha == local_sha:
+        print("  Already up to date")
+        return
+
+    print(f"  New version available — updating...")
+    if download_and_extract(remote_sha):
+        print("  ✓ Updated successfully — restarting...")
+        cleanup()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    else:
+        print("  Update failed — running current version")
+        cleanup()
+
+
+if __name__ == "__main__":
+    main()

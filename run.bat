@@ -30,8 +30,15 @@ if errorlevel 1 (
     %PY% -m pip install playwright
 )
 
-:: Install Playwright browser if missing
-%PY% -m playwright install chromium >nul 2>&1
+:: Install Playwright browser only if not already installed
+if not exist ".playwright_installed" (
+    echo Installing Playwright browser ^(first time only^)...
+    %PY% -m playwright install chromium
+    echo installed > .playwright_installed
+)
+
+:: Check for updates
+%PY% auto_update.py
 
 :: Launch
 %PY% gui.py

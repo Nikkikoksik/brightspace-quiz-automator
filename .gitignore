@@ -7,6 +7,10 @@ bs_profile/
 cb_profile/
 downloads/
 coursebridge_preview.html
+.playwright_installed
+.version
+_update.zip
+_update_tmp/
 __pycache__/
 *.pyc
 *.pyo
