@@ -43,7 +43,13 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         if await timing_btn.count():
             if await timing_btn.get_attribute("aria-expanded") == "false":
                 await timing_btn.click()
-                await page.wait_for_timeout(500)
+
+        # Wait for Timer Settings to actually appear instead of a fixed delay
+        try:
+            await page.wait_for_selector("text=Timer Settings", timeout=15000)
+        except Exception:
+            print("    Timer     : Timer Settings link not found after 15s — skipping")
+            return
 
         timer_link = page.locator("text=Timer Settings").first
         if not await timer_link.count():
@@ -58,7 +64,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         await timer_link.click()
         await page.wait_for_selector(
             "input[type='radio'][name='timeLimitOption'][value='autosubmit']",
-            timeout=6000,
+            timeout=15000,
         )
         await page.locator(
             "input[type='radio'][name='timeLimitOption'][value='autosubmit']"
