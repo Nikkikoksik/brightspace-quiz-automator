@@ -206,12 +206,11 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
         async with page.expect_popup() as popup_info:
             await page.locator("button#z_j").click()
         popup = await popup_info.value
-        await popup.wait_for_load_state("domcontentloaded", timeout=15000)
+        await popup.wait_for_load_state("networkidle", timeout=15000)
 
         print(f"  Popup URL: {popup.url}")
         print(f"  Typing source course: {source_course!r}")
-        print(f"  DEBUG frames: {[(f.name, f.url[:80]) for f in popup.frames]}")
-        body_frame = popup.frame(name="Body")
+        body_frame = popup.frame(url="**/select_course_offering.d2l**")
         await body_frame.locator("#z_b").fill(source_course)
 
         print(f"\n{'─' * 50}")
