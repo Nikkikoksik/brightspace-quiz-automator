@@ -103,16 +103,16 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                 await timing_btn.click()
                 await page.wait_for_timeout(600)
 
-        # Wait for Timer Settings to actually appear instead of a fixed delay
+        # Wait for Timer Settings to appear — short timeout since panel is already expanded
         try:
-            await page.wait_for_selector("text=Timer Settings", timeout=30000)
+            await page.wait_for_selector("text=Timer Settings", timeout=5000)
         except Exception:
-            print("    Timer     : Timer Settings link not found after 30s — skipping")
+            print("    Timer     : no timer configured — skipping")
             return
 
         timer_link = page.locator("text=Timer Settings").first
         if not await timer_link.count():
-            print("    Timer     : Timer Settings link not found — skipping")
+            print("    Timer     : no timer configured — skipping")
             return
 
         if dry_run:

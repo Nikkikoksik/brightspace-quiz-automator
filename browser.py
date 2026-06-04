@@ -9,6 +9,37 @@ from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignm
 SESSION_FILE = str(Path(__file__).parent / "session.json")
 
 
+async def _wait_for_login(page, context):
+    """Navigate to Brightspace, wait for user login, save session."""
+    print("Opening Brightspace...")
+    await page.goto("https://learn.okanagancollege.ca")
+    print("─" * 50)
+    print("  Log in with your Okanagan College account.")
+    print("  Complete any MFA steps (email code, authenticator, etc.).")
+    print("  Script continues automatically once you reach the home page.")
+    print("─" * 50)
+    for i in range(180):
+        await page.wait_for_timeout(3000)
+        url = page.url
+        if "learn.okanagancollege.ca" in url and "microsoftonline.com" not in url:
+            try:
+                await page.goto("https://learn.okanagancollege.ca/d2l/home", timeout=15000)
+                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                await page.wait_for_timeout(2000)
+            except Exception:
+                pass
+            if "learn.okanagancollege.ca" in page.url and "microsoftonline.com" not in page.url:
+                break
+        if i % 10 == 0 and i > 0:
+            print(f"  Still waiting... ({i * 3}s)  |  {page.url[:80]}")
+    else:
+        raise RuntimeError("Login timed out after 9 minutes")
+    print("✓ Logged in — saving session...")
+    await page.wait_for_load_state("networkidle", timeout=20000)
+    await context.storage_state(path=SESSION_FILE)
+    print("✓ Session saved")
+
+
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
@@ -17,39 +48,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
         )
         page = await context.new_page()
 
-        # Pre-login: open Brightspace home and wait for confirmed login
-        print("Opening Brightspace...")
-        await page.goto("https://learn.okanagancollege.ca")
-        print("─" * 50)
-        print("  Log in with your Okanagan College account.")
-        print("  Complete any MFA steps (email code, authenticator, etc.).")
-        print("  The script will continue automatically once you are on")
-        print("  the Brightspace home page.")
-        print("─" * 50)
-
-        for i in range(180):
-            await page.wait_for_timeout(3000)
-            url = page.url
-            on_bs = "learn.okanagancollege.ca" in url
-            on_ms = "microsoftonline.com" in url or "login.microsoft" in url
-            if on_bs and not on_ms:
-                try:
-                    await page.goto("https://learn.okanagancollege.ca/d2l/home", timeout=15000)
-                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                    await page.wait_for_timeout(2000)
-                except Exception:
-                    pass
-                if "learn.okanagancollege.ca" in page.url and "microsoftonline.com" not in page.url:
-                    break
-            if i % 10 == 0 and i > 0:
-                print(f"  Still waiting... ({i * 3}s)  |  {url[:80]}")
-        else:
-            raise RuntimeError("Login timed out after 9 minutes")
-
-        print(f"✓ Logged in — saving session...")
-        await page.wait_for_load_state("networkidle", timeout=20000)
-        await context.storage_state(path=SESSION_FILE)
-        print("✓ Session saved")
+        await _wait_for_login(page, context)
 
         for course_url in urls:
             print(f"\n{'─' * 50}")
@@ -115,36 +114,7 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
         )
         page = await context.new_page()
 
-        print("Opening Brightspace...")
-        await page.goto("https://learn.okanagancollege.ca")
-        print("─" * 50)
-        print("  Log in with your Okanagan College account.")
-        print("  The script will continue once you reach the home page.")
-        print("─" * 50)
-
-        for i in range(180):
-            await page.wait_for_timeout(3000)
-            url = page.url
-            on_bs = "learn.okanagancollege.ca" in url
-            on_ms = "microsoftonline.com" in url or "login.microsoft" in url
-            if on_bs and not on_ms:
-                try:
-                    await page.goto("https://learn.okanagancollege.ca/d2l/home", timeout=15000)
-                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                    await page.wait_for_timeout(2000)
-                except Exception:
-                    pass
-                if "learn.okanagancollege.ca" in page.url and "microsoftonline.com" not in page.url:
-                    break
-            if i % 10 == 0 and i > 0:
-                print(f"  Still waiting... ({i * 3}s)")
-        else:
-            raise RuntimeError("Login timed out after 9 minutes")
-
-        print("✓ Logged in — saving session...")
-        await page.wait_for_load_state("networkidle", timeout=20000)
-        await context.storage_state(path=SESSION_FILE)
-        print("✓ Session saved")
+        await _wait_for_login(page, context)
 
         for course_url in urls:
             print(f"\n{'─' * 50}")
@@ -206,32 +176,7 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
         )
         page = await context.new_page()
 
-        print("Opening Brightspace...")
-        await page.goto("https://learn.okanagancollege.ca")
-        print("─" * 50)
-        print("  Log in with your Okanagan College account.")
-        print("  Complete any MFA steps (email code, authenticator, etc.).")
-        print("  The script will continue automatically once you are on")
-        print("  the Brightspace home page.")
-        print("─" * 50)
-
-        for i in range(180):
-            await page.wait_for_timeout(3000)
-            url = page.url
-            on_bs = "learn.okanagancollege.ca" in url
-            on_ms = "microsoftonline.com" in url or "login.microsoft" in url
-            on_login = "/d2l/lp/auth" in url or "/login" in url
-            if on_bs and not on_ms and not on_login:
-                break
-            if i % 10 == 0 and i > 0:
-                print(f"  Still waiting... ({i * 3}s)  |  {url[:80]}")
-        else:
-            raise RuntimeError("Login timed out after 9 minutes")
-
-        print("✓ Logged in — saving session...")
-        await page.wait_for_load_state("networkidle", timeout=20000)
-        await context.storage_state(path=SESSION_FILE)
-        print("✓ Session saved")
+        await _wait_for_login(page, context)
 
         for course_url in urls:
             print(f"\n{'─' * 50}")

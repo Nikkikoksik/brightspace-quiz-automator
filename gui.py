@@ -12,12 +12,15 @@ import customtkinter as ctk
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-_HERE        = Path(__file__).parent
-COURSES_FILE = str(_HERE / "courses.txt")
-OUTLINE_CFG  = str(_HERE / "outline_config.json")
+_HERE       = Path(__file__).parent
+from config import COURSES_FILE
+OUTLINE_CFG = str(_HERE / "outline_config.json")
+
+_SIDEBAR_BG = "#1a1a2e"
+_NAV_HOVER  = "#252540"
+_NAV_ACTIVE = "#2e2e52"
 
 
-# ── GUI prompt helper (used by course outline automator) ─────────────────────
 class _GUIPrompter:
     """Bridges worker-thread input() calls to main-thread dialogs."""
 
@@ -26,7 +29,7 @@ class _GUIPrompter:
 
     def __call__(self, prompt: str) -> str:
         result = [""]
-        event = threading.Event()
+        event  = threading.Event()
 
         def show():
             if "(y/n)" in prompt:
@@ -46,8 +49,8 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Brightspace Automator")
-        self.geometry("700x800")
-        self.resizable(False, False)
+        self.geometry("960x820")
+        self.minsize(800, 600)
 
         self._log_queue    = queue.Queue()
         self._url_rows     = []
@@ -56,60 +59,134 @@ class App(ctk.CTk):
 
         self._build_ui()
         self._load_courses()
-        self._load_outline_config()
+        self._load_config()
         self.after(100, self._poll_log)
 
-    # ── UI layout ────────────────────────────────────────────────────────────
+    # ── Layout helpers ────────────────────────────────────────────────────────
+
+    def _panel_body(self, parent, title: str, subtitle: str = "") -> ctk.CTkScrollableFrame:
+        """Standard panel header + divider + scrollable content area."""
+        hdr = ctk.CTkFrame(parent, fg_color="transparent")
+        hdr.pack(fill="x", padx=24, pady=(20, 0))
+        ctk.CTkLabel(hdr, text=title,
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w")
+        if subtitle:
+            ctk.CTkLabel(hdr, text=subtitle,
+                         font=ctk.CTkFont(size=12), text_color="gray").pack(anchor="w", pady=(2, 0))
+        ctk.CTkFrame(parent, height=1, fg_color="#333355").pack(fill="x", padx=24, pady=(12, 4))
+        body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        return body
+
+    def _section_label(self, parent, text: str):
+        ctk.CTkLabel(parent, text=text,
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="gray").pack(anchor="w", pady=(12, 4))
+
+    # ── UI layout ─────────────────────────────────────────────────────────────
 
     def _build_ui(self):
-        # Header
-        header = ctk.CTkFrame(self, fg_color="#1a1a2e", corner_radius=0, height=64)
-        header.pack(fill="x")
-        header.pack_propagate(False)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        # Sidebar
+        sidebar = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=_SIDEBAR_BG)
+        sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.grid_propagate(False)
+        sidebar.grid_columnconfigure(0, weight=1)
+        sidebar.grid_rowconfigure(6, weight=1)  # spacer pushes Settings to bottom
+
         ctk.CTkLabel(
-            header, text="Brightspace Automator",
-            font=ctk.CTkFont(size=20, weight="bold"), text_color="white",
-        ).pack(side="left", padx=24, pady=14)
+            sidebar, text="Brightspace\nAutomator",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color="white", justify="left",
+        ).grid(row=0, column=0, sticky="w", padx=20, pady=(28, 20))
 
-        # Tabs
-        tabs = ctk.CTkTabview(self)
-        tabs.pack(fill="both", expand=True, padx=16, pady=(8, 16))
-        tabs.add("Quiz Automator")
-        tabs.add("Assignment Automator")
-        tabs.add("Timer Fix")
-        tabs.add("Course Outline")
+        nav_items = [
+            ("Quiz Automator",       "  Quizzes"),
+            ("Assignment Automator", "  Assignments"),
+            ("Timer Fix",            "  Timer Fix"),
+            ("Course Outline",       "  Course Outline"),
+            ("Staging",              "  Staging"),
+        ]
+        self._nav_btns = {}
+        for r, (key, label) in enumerate(nav_items, start=1):
+            btn = ctk.CTkButton(
+                sidebar, text=label, anchor="w", height=40,
+                fg_color="transparent", hover_color=_NAV_HOVER,
+                text_color="#aaaacc", font=ctk.CTkFont(size=13),
+                corner_radius=6,
+                command=lambda k=key: self._show_panel(k),
+            )
+            btn.grid(row=r, column=0, sticky="ew", padx=8, pady=2)
+            self._nav_btns[key] = btn
 
-        self._build_quiz_tab(tabs.tab("Quiz Automator"))
-        self._build_assignment_tab(tabs.tab("Assignment Automator"))
-        self._build_timer_fix_tab(tabs.tab("Timer Fix"))
-        self._build_outline_tab(tabs.tab("Course Outline"))
+        ctk.CTkFrame(sidebar, height=1, fg_color="#2a2a45").grid(
+            row=6, column=0, sticky="sew", padx=16, pady=(0, 4),
+        )
+        settings_btn = ctk.CTkButton(
+            sidebar, text="  Settings", anchor="w", height=40,
+            fg_color="transparent", hover_color=_NAV_HOVER,
+            text_color="#aaaacc", font=ctk.CTkFont(size=13),
+            corner_radius=6,
+            command=lambda: self._show_panel("Settings"),
+        )
+        settings_btn.grid(row=7, column=0, sticky="ew", padx=8, pady=(0, 16))
+        self._nav_btns["Settings"] = settings_btn
 
-    # ── Quiz Automator tab ───────────────────────────────────────────────────
+        # Content area
+        content = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        content.grid(row=0, column=1, sticky="nsew")
+        content.grid_rowconfigure(0, weight=1)
+        content.grid_columnconfigure(0, weight=1)
 
-    def _build_quiz_tab(self, parent):
-        body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        body.pack(fill="both", expand=True)
-        self._quiz_body = body
+        self._panels = {}
+        for key, builder in [
+            ("Quiz Automator",       self._build_quiz_panel),
+            ("Assignment Automator", self._build_assignment_panel),
+            ("Timer Fix",            self._build_timer_fix_panel),
+            ("Course Outline",       self._build_outline_panel),
+            ("Staging",              self._build_staging_panel),
+            ("Settings",             self._build_settings_panel),
+        ]:
+            panel = ctk.CTkFrame(content, corner_radius=0, fg_color="transparent")
+            panel.grid(row=0, column=0, sticky="nsew")
+            panel.grid_rowconfigure(0, weight=1)
+            panel.grid_columnconfigure(0, weight=1)
+            self._panels[key] = panel
+            builder(panel)
 
-        ctk.CTkLabel(body, text="COURSE URLS",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(8, 4))
+        self._show_panel("Quiz Automator")
 
+    def _show_panel(self, name: str):
+        for panel in self._panels.values():
+            panel.grid_remove()
+        self._panels[name].grid()
+        for key, btn in self._nav_btns.items():
+            if key == name:
+                btn.configure(fg_color=_NAV_ACTIVE, text_color="white")
+            else:
+                btn.configure(fg_color="transparent", text_color="#aaaacc")
+
+    # ── Quiz panel ────────────────────────────────────────────────────────────
+
+    def _build_quiz_panel(self, parent):
+        body = self._panel_body(parent, "Quiz Automator",
+                                "Bulk-update quiz settings across courses")
+
+        self._section_label(body, "COURSE URLS")
         self._urls_container = ctk.CTkFrame(body)
-        self._urls_container.pack(fill="x", pady=(0, 6))
+        self._urls_container.pack(fill="x", pady=(0, 4))
 
         ctk.CTkButton(
             body, text="＋  Add course URL", height=32,
             fg_color="transparent", border_width=1,
             command=self._add_url_row,
-        ).pack(anchor="w", pady=(0, 18))
+        ).pack(anchor="w", pady=(0, 12))
 
-        ctk.CTkLabel(body, text="SETTINGS",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
+        self._section_label(body, "SETTINGS")
         sf = ctk.CTkFrame(body)
-        sf.pack(fill="x", pady=(0, 18))
+        sf.pack(fill="x", pady=(0, 16))
 
         self._gradebook_var  = ctk.BooleanVar(value=True)
         self._autosubmit_var = ctk.BooleanVar(value=True)
@@ -133,47 +210,37 @@ class App(ctk.CTk):
         self._quiz_pause_btn = ctk.CTkButton(
             body, text="⏸   PAUSE", height=36,
             fg_color="#555555", hover_color="#444444",
-            command=self._toggle_quiz_pause,
-            state="disabled",
+            command=self._toggle_quiz_pause, state="disabled",
         )
-        self._quiz_pause_btn.pack(fill="x", pady=(0, 18))
+        self._quiz_pause_btn.pack(fill="x", pady=(0, 12))
 
-        ctk.CTkLabel(body, text="LOG",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
+        self._section_label(body, "LOG")
         self._quiz_log = ctk.CTkTextbox(
             body, height=200, state="disabled",
             font=ctk.CTkFont(family="Courier New", size=12),
         )
         self._quiz_log.pack(fill="x")
 
-    # ── Assignment Automator tab ─────────────────────────────────────────────
+    # ── Assignment panel ──────────────────────────────────────────────────────
 
-    def _build_assignment_tab(self, parent):
-        body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        body.pack(fill="both", expand=True)
+    def _build_assignment_panel(self, parent):
+        body = self._panel_body(parent, "Assignment Automator",
+                                "Bulk-update assignment settings across courses")
 
-        ctk.CTkLabel(body, text="ASSIGNMENT PAGE URLS",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(8, 4))
-
+        self._section_label(body, "ASSIGNMENT PAGE URLS")
         self._assign_urls_container = ctk.CTkFrame(body)
-        self._assign_urls_container.pack(fill="x", pady=(0, 6))
+        self._assign_urls_container.pack(fill="x", pady=(0, 4))
         self._assign_url_rows = []
 
         ctk.CTkButton(
             body, text="＋  Add assignment page URL", height=32,
             fg_color="transparent", border_width=1,
             command=self._add_assign_url_row,
-        ).pack(anchor="w", pady=(0, 18))
+        ).pack(anchor="w", pady=(0, 12))
 
-        ctk.CTkLabel(body, text="SETTINGS",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
+        self._section_label(body, "SETTINGS")
         sf = ctk.CTkFrame(body)
-        sf.pack(fill="x", pady=(0, 18))
+        sf.pack(fill="x", pady=(0, 16))
 
         self._assign_gradebook_var = ctk.BooleanVar(value=True)
         self._assign_dryrun        = ctk.BooleanVar(value=False)
@@ -194,15 +261,11 @@ class App(ctk.CTk):
         self._assign_pause_btn = ctk.CTkButton(
             body, text="⏸   PAUSE", height=36,
             fg_color="#555555", hover_color="#444444",
-            command=self._toggle_assign_pause,
-            state="disabled",
+            command=self._toggle_assign_pause, state="disabled",
         )
-        self._assign_pause_btn.pack(fill="x", pady=(0, 18))
+        self._assign_pause_btn.pack(fill="x", pady=(0, 12))
 
-        ctk.CTkLabel(body, text="LOG",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
+        self._section_label(body, "LOG")
         self._assign_log = ctk.CTkTextbox(
             body, height=200, state="disabled",
             font=ctk.CTkFont(family="Courier New", size=12),
@@ -210,53 +273,25 @@ class App(ctk.CTk):
         self._assign_log.pack(fill="x")
         self._add_assign_url_row()
 
-    def _add_assign_url_row(self, url=""):
-        row = ctk.CTkFrame(self._assign_urls_container, fg_color="transparent")
-        row.pack(fill="x", padx=10, pady=5)
-        entry = ctk.CTkEntry(row, placeholder_text="Paste assignment page URL here…", height=38)
-        entry.pack(side="left", fill="x", expand=True)
-        if url:
-            entry.insert(0, url)
-        def remove():
-            self._assign_url_rows = [(f, e) for f, e in self._assign_url_rows if f is not row]
-            row.destroy()
-        ctk.CTkButton(
-            row, text="✕", width=38, height=38,
-            fg_color="transparent", text_color="gray",
-            hover_color="#3a3a3a", command=remove,
-        ).pack(side="left", padx=(6, 0))
-        self._assign_url_rows.append((row, entry))
+    # ── Timer Fix panel ───────────────────────────────────────────────────────
 
-    # ── Course Outline tab ───────────────────────────────────────────────────
+    def _build_timer_fix_panel(self, parent):
+        body = self._panel_body(parent, "Timer Fix",
+                                "Re-run only the auto-submit timer fix — skips grade book entirely")
 
-    # ── Timer Fix tab ────────────────────────────────────────────────────────
-
-    def _build_timer_fix_tab(self, parent):
-        body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        body.pack(fill="both", expand=True)
-
-        ctk.CTkLabel(
-            body,
-            text="Re-runs only the auto-submit timer fix. Skips grade book entirely.",
-            font=ctk.CTkFont(size=12), text_color="gray",
-        ).pack(anchor="w", pady=(10, 12))
-
-        ctk.CTkLabel(body, text="QUIZ PAGE URLS",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
+        self._section_label(body, "QUIZ PAGE URLS")
         self._tfix_urls_container = ctk.CTkFrame(body)
-        self._tfix_urls_container.pack(fill="x", pady=(0, 6))
+        self._tfix_urls_container.pack(fill="x", pady=(0, 4))
         self._tfix_url_rows = []
 
         ctk.CTkButton(
             body, text="＋  Add quiz page URL", height=32,
             fg_color="transparent", border_width=1,
             command=self._add_tfix_url_row,
-        ).pack(anchor="w", pady=(0, 18))
+        ).pack(anchor="w", pady=(0, 12))
 
         sf = ctk.CTkFrame(body)
-        sf.pack(fill="x", pady=(0, 18))
+        sf.pack(fill="x", pady=(0, 16))
         self._tfix_dryrun = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(sf, text="Dry run  (preview only — nothing will be saved)",
                         variable=self._tfix_dryrun,
@@ -267,12 +302,9 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_timer_fix,
         )
-        self._tfix_run_btn.pack(fill="x", pady=(0, 18))
+        self._tfix_run_btn.pack(fill="x", pady=(0, 16))
 
-        ctk.CTkLabel(body, text="LOG",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
+        self._section_label(body, "LOG")
         self._tfix_log = ctk.CTkTextbox(
             body, height=280, state="disabled",
             font=ctk.CTkFont(family="Courier New", size=12),
@@ -280,101 +312,26 @@ class App(ctk.CTk):
         self._tfix_log.pack(fill="x")
         self._add_tfix_url_row()
 
-    def _add_tfix_url_row(self, url=""):
-        row = ctk.CTkFrame(self._tfix_urls_container, fg_color="transparent")
-        row.pack(fill="x", padx=10, pady=5)
-        entry = ctk.CTkEntry(row, placeholder_text="Paste quiz page URL here…", height=38)
-        entry.pack(side="left", fill="x", expand=True)
-        if url:
-            entry.insert(0, url)
-        def remove():
-            self._tfix_url_rows = [(f, e) for f, e in self._tfix_url_rows if f is not row]
-            row.destroy()
-        ctk.CTkButton(
-            row, text="✕", width=38, height=38,
-            fg_color="transparent", text_color="gray",
-            hover_color="#3a3a3a", command=remove,
-        ).pack(side="left", padx=(6, 0))
-        self._tfix_url_rows.append((row, entry))
+    # ── Course Outline panel ──────────────────────────────────────────────────
 
-    def _start_timer_fix(self):
-        urls = [e.get().strip() for _, e in self._tfix_url_rows if e.get().strip()]
-        if not urls:
-            self._append(self._tfix_log, "⚠  No URLs entered.")
-            return
-        self._tfix_run_btn.configure(state="disabled", text="Running…")
-        self._tfix_log.configure(state="normal")
-        self._tfix_log.delete("1.0", "end")
-        self._tfix_log.configure(state="disabled")
-        dry_run = self._tfix_dryrun.get()
-        ask_fn  = self._make_ask_fn()
-        q = self._log_queue
+    def _build_outline_panel(self, parent):
+        body = self._panel_body(parent, "Course Outline",
+                                "Download, convert and paste the course outline into Brightspace")
 
-        def worker():
-            class W:
-                def write(self, t):
-                    if t.strip(): q.put(("tfix", t.rstrip()))
-                def flush(self): pass
-            old, sys.stdout = sys.stdout, W()
-            try:
-                from browser import run_timer_fix
-                asyncio.run(run_timer_fix(urls=urls, dry_run=dry_run, ask_fn=ask_fn))
-            except Exception as e:
-                q.put(("tfix", f"✗  {e}"))
-            finally:
-                sys.stdout = old
-                q.put(("tfix", "__DONE__"))
-        threading.Thread(target=worker, daemon=True).start()
+        self._section_label(body, "COURSE  (CRN number  or  full Brightspace URL)")
+        self._outline_url = ctk.CTkEntry(
+            body, placeholder_text="e.g.  80147  or  https://learn.okanagancollege.ca/…",
+            height=38,
+        )
+        self._outline_url.pack(fill="x", pady=(0, 16))
 
-    def _build_outline_tab(self, parent):
-        body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        body.pack(fill="both", expand=True)
-
-        # Course URL
-        ctk.CTkLabel(body, text="COURSE  (CRN number  or  full Brightspace URL)",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(8, 4))
-        self._outline_url = ctk.CTkEntry(body, placeholder_text="e.g.  80147  or  https://learn.okanagancollege.ca/…", height=38)
-        self._outline_url.pack(fill="x", pady=(0, 18))
-
-        # CourseBridge credentials
-        ctk.CTkLabel(body, text="COURSEBRIDGE CREDENTIALS",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
-        cf = ctk.CTkFrame(body)
-        cf.pack(fill="x", pady=(0, 18))
-
-        ctk.CTkLabel(cf, text="Email").pack(anchor="w", padx=16, pady=(14, 2))
-        self._cb_email = ctk.CTkEntry(cf, height=36)
-        self._cb_email.pack(fill="x", padx=16, pady=(0, 8))
-
-        ctk.CTkLabel(cf, text="Password").pack(anchor="w", padx=16, pady=(0, 2))
-        self._cb_password = ctk.CTkEntry(cf, height=36, show="●")
-        self._cb_password.pack(fill="x", padx=16, pady=(0, 14))
-
-        # Pre-fill from module defaults (overridden by saved config on startup)
-        from course_outline_automator import COURSEBRIDGE_EMAIL, COURSEBRIDGE_PASSWORD
-        if COURSEBRIDGE_EMAIL:
-            self._cb_email.insert(0, COURSEBRIDGE_EMAIL)
-        if COURSEBRIDGE_PASSWORD:
-            self._cb_password.insert(0, COURSEBRIDGE_PASSWORD)
-        # Note: _load_outline_config() runs after _build_ui() and overwrites these
-
-        # Options
-        ctk.CTkLabel(body, text="OPTIONS",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
-        of = ctk.CTkFrame(body)
-        of.pack(fill="x", pady=(0, 18))
-
+        sf = ctk.CTkFrame(body)
+        sf.pack(fill="x", pady=(0, 16))
         self._outline_dryrun = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            of,
+            sf,
             text="Dry run  (download + convert only — nothing pasted into Brightspace)",
-            variable=self._outline_dryrun,
-            text_color="#f0a500",
+            variable=self._outline_dryrun, text_color="#f0a500",
         ).pack(anchor="w", padx=16, pady=14)
 
         self._outline_run_btn = ctk.CTkButton(
@@ -384,31 +341,99 @@ class App(ctk.CTk):
         )
         self._outline_run_btn.pack(fill="x", pady=(0, 8))
 
-        ctk.CTkLabel(body, text="TEST INDIVIDUAL STEPS",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(8, 4))
-
+        self._section_label(body, "TEST INDIVIDUAL STEPS")
         self._test_step4_btn = ctk.CTkButton(
             body, text="▶   TEST STEP 4 ONLY  (paste existing HTML into Brightspace)",
             height=38, font=ctk.CTkFont(size=13),
             fg_color="#2a4a2a", hover_color="#3a6a3a",
             command=self._start_test_step4,
         )
-        self._test_step4_btn.pack(fill="x", pady=(0, 18))
+        self._test_step4_btn.pack(fill="x", pady=(0, 12))
 
-        ctk.CTkLabel(body, text="LOG",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray").pack(anchor="w", pady=(0, 4))
-
+        self._section_label(body, "LOG")
         self._outline_log = ctk.CTkTextbox(
             body, height=220, state="disabled",
             font=ctk.CTkFont(family="Courier New", size=12),
         )
         self._outline_log.pack(fill="x")
 
-    # ── Outline config persistence ────────────────────────────────────────────
+    # ── Staging panel ─────────────────────────────────────────────────────────
 
-    def _load_outline_config(self):
+    def _build_staging_panel(self, parent):
+        body = self._panel_body(parent, "Staging",
+                                "Automate the Brightspace staging process one step at a time")
+
+        self._section_label(body, "CRN  (leave blank to use first course in staging queue)")
+        self._staging_crn = ctk.CTkEntry(
+            body, placeholder_text="Enter CRN…  (leave blank to use first course in queue)",
+            height=38,
+        )
+        self._staging_crn.pack(fill="x", pady=(0, 16))
+
+        sf = ctk.CTkFrame(body)
+        sf.pack(fill="x", pady=(0, 16))
+        self._staging_dryrun = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(sf, text="Dry run  (find shell + navigate, but do not click anything)",
+                        variable=self._staging_dryrun,
+                        text_color="#f0a500").pack(anchor="w", padx=16, pady=14)
+
+        self._staging_refresh_btn = ctk.CTkButton(
+            body, text="⟳   REFRESH QUEUE FROM COURSEBRIDGE", height=38,
+            fg_color="#2a2a4a", hover_color="#3a3a6a",
+            command=self._start_staging_refresh,
+        )
+        self._staging_refresh_btn.pack(fill="x", pady=(0, 8))
+
+        self._staging_step1_btn = ctk.CTkButton(
+            body, text="▶   STEP 1 — Hide Blueprint Module", height=52,
+            font=ctk.CTkFont(size=17, weight="bold"),
+            command=self._start_staging_step1,
+        )
+        self._staging_step1_btn.pack(fill="x", pady=(0, 16))
+
+        self._section_label(body, "LOG")
+        self._staging_log = ctk.CTkTextbox(
+            body, height=280, state="disabled",
+            font=ctk.CTkFont(family="Courier New", size=12),
+        )
+        self._staging_log.pack(fill="x")
+
+    # ── Settings panel ────────────────────────────────────────────────────────
+
+    def _build_settings_panel(self, parent):
+        body = self._panel_body(parent, "Settings",
+                                "Credentials and global configuration")
+
+        self._section_label(body, "COURSEBRIDGE")
+        cf = ctk.CTkFrame(body)
+        cf.pack(fill="x", pady=(0, 16))
+
+        ctk.CTkLabel(cf, text="Email").pack(anchor="w", padx=16, pady=(14, 2))
+        self._cb_email = ctk.CTkEntry(cf, height=36)
+        self._cb_email.pack(fill="x", padx=16, pady=(0, 8))
+
+        ctk.CTkLabel(cf, text="Password").pack(anchor="w", padx=16, pady=(0, 2))
+        self._cb_password = ctk.CTkEntry(cf, height=36, show="●")
+        self._cb_password.pack(fill="x", padx=16, pady=(0, 14))
+
+        self._section_label(body, "BRIGHTSPACE")
+        bf = ctk.CTkFrame(body)
+        bf.pack(fill="x", pady=(0, 16))
+        ctk.CTkLabel(
+            bf,
+            text="Your session is saved automatically after first login.\nNo credentials needed here.",
+            font=ctk.CTkFont(size=12), text_color="gray", justify="left",
+        ).pack(anchor="w", padx=16, pady=14)
+
+        self._save_settings_btn = ctk.CTkButton(
+            body, text="Save Settings", height=42, width=160,
+            command=self._save_settings,
+        )
+        self._save_settings_btn.pack(anchor="w")
+
+    # ── Config persistence ────────────────────────────────────────────────────
+
+    def _load_config(self):
         try:
             with open(OUTLINE_CFG) as f:
                 cfg = json.load(f)
@@ -423,34 +448,77 @@ class App(ctk.CTk):
         except (FileNotFoundError, json.JSONDecodeError):
             pass
 
-    def _save_outline_config(self, course_url, email, password):
+    def _save_config(self, course_url=None, email=None, password=None):
+        try:
+            with open(OUTLINE_CFG) as f:
+                cfg = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            cfg = {}
+        if course_url is not None:
+            cfg["course_url"] = course_url
+        if email is not None:
+            cfg["cb_email"] = email
+        if password is not None:
+            cfg["cb_password"] = password
         with open(OUTLINE_CFG, "w") as f:
-            json.dump({"course_url": course_url, "cb_email": email, "cb_password": password}, f)
+            json.dump(cfg, f)
 
-    # ── URL rows (quiz tab) ───────────────────────────────────────────────────
+    def _save_settings(self):
+        self._save_config(
+            email=self._cb_email.get().strip(),
+            password=self._cb_password.get().strip(),
+        )
+        self._save_settings_btn.configure(text="✓  Saved")
+        self.after(1500, lambda: self._save_settings_btn.configure(text="Save Settings"))
+
+    # ── URL row helpers ───────────────────────────────────────────────────────
 
     def _add_url_row(self, url=""):
         row = ctk.CTkFrame(self._urls_container, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=5)
-
         entry = ctk.CTkEntry(row, placeholder_text="Paste quiz page URL here…", height=38)
         entry.pack(side="left", fill="x", expand=True)
         if url:
             entry.insert(0, url)
-
         def remove():
             self._url_rows = [(f, e) for f, e in self._url_rows if f is not row]
             row.destroy()
-
-        ctk.CTkButton(
-            row, text="✕", width=38, height=38,
-            fg_color="transparent", text_color="gray",
-            hover_color="#3a3a3a", command=remove,
-        ).pack(side="left", padx=(6, 0))
-
+        ctk.CTkButton(row, text="✕", width=38, height=38,
+                      fg_color="transparent", text_color="gray",
+                      hover_color="#3a3a3a", command=remove).pack(side="left", padx=(6, 0))
         self._url_rows.append((row, entry))
 
-    # ── Persistence ──────────────────────────────────────────────────────────
+    def _add_assign_url_row(self, url=""):
+        row = ctk.CTkFrame(self._assign_urls_container, fg_color="transparent")
+        row.pack(fill="x", padx=10, pady=5)
+        entry = ctk.CTkEntry(row, placeholder_text="Paste assignment page URL here…", height=38)
+        entry.pack(side="left", fill="x", expand=True)
+        if url:
+            entry.insert(0, url)
+        def remove():
+            self._assign_url_rows = [(f, e) for f, e in self._assign_url_rows if f is not row]
+            row.destroy()
+        ctk.CTkButton(row, text="✕", width=38, height=38,
+                      fg_color="transparent", text_color="gray",
+                      hover_color="#3a3a3a", command=remove).pack(side="left", padx=(6, 0))
+        self._assign_url_rows.append((row, entry))
+
+    def _add_tfix_url_row(self, url=""):
+        row = ctk.CTkFrame(self._tfix_urls_container, fg_color="transparent")
+        row.pack(fill="x", padx=10, pady=5)
+        entry = ctk.CTkEntry(row, placeholder_text="Paste quiz page URL here…", height=38)
+        entry.pack(side="left", fill="x", expand=True)
+        if url:
+            entry.insert(0, url)
+        def remove():
+            self._tfix_url_rows = [(f, e) for f, e in self._tfix_url_rows if f is not row]
+            row.destroy()
+        ctk.CTkButton(row, text="✕", width=38, height=38,
+                      fg_color="transparent", text_color="gray",
+                      hover_color="#3a3a3a", command=remove).pack(side="left", padx=(6, 0))
+        self._tfix_url_rows.append((row, entry))
+
+    # ── Course persistence ────────────────────────────────────────────────────
 
     def _load_courses(self):
         try:
@@ -480,16 +548,14 @@ class App(ctk.CTk):
     def _poll_log(self):
         try:
             while True:
-                item = self._log_queue.get_nowait()
-                tag, msg = item
-                if tag == "quiz":
-                    box = self._quiz_log
-                elif tag == "assign":
-                    box = self._assign_log
-                elif tag == "tfix":
-                    box = self._tfix_log
-                else:
-                    box = self._outline_log
+                tag, msg = self._log_queue.get_nowait()
+                box = {
+                    "quiz":    self._quiz_log,
+                    "assign":  self._assign_log,
+                    "tfix":    self._tfix_log,
+                    "staging": self._staging_log,
+                }.get(tag, self._outline_log)
+
                 if msg == "__DONE__":
                     if tag == "quiz":
                         self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
@@ -501,6 +567,8 @@ class App(ctk.CTk):
                         self._resume_event.set()
                     elif tag == "tfix":
                         self._tfix_run_btn.configure(state="normal", text="▶   RUN TIMER FIX")
+                    elif tag == "staging":
+                        self._staging_step1_btn.configure(state="normal", text="▶   STEP 1 — Hide Blueprint Module")
                     else:
                         self._outline_run_btn.configure(state="normal", text="▶   RUN COURSE OUTLINE AUTOMATOR")
                 else:
@@ -512,10 +580,9 @@ class App(ctk.CTk):
     # ── Ask-start-from dialog ─────────────────────────────────────────────────
 
     def _make_ask_fn(self):
-        """Return a callable that pops a start-from dialog on the main thread."""
         import tkinter.simpledialog as sd
         result = [1]
-        event = threading.Event()
+        event  = threading.Event()
 
         def ask(total, label):
             def show():
@@ -532,14 +599,13 @@ class App(ctk.CTk):
 
         return ask
 
-    # ── Quiz run ─────────────────────────────────────────────────────────────
+    # ── Quiz run ──────────────────────────────────────────────────────────────
 
     def _start_quiz_run(self):
         urls = [e.get().strip() for _, e in self._url_rows if e.get().strip()]
         if not urls:
             self._append(self._quiz_log, "⚠  No URLs entered.")
             return
-
         self._save_courses(urls)
         self._quiz_run_btn.configure(state="disabled", text="Running…")
         self._quiz_pause_btn.configure(state="normal")
@@ -547,15 +613,14 @@ class App(ctk.CTk):
         self._quiz_log.configure(state="normal")
         self._quiz_log.delete("1.0", "end")
         self._quiz_log.configure(state="disabled")
-
         settings = {
             "set_in_gradebook": self._gradebook_var.get(),
             "set_auto_submit":  self._autosubmit_var.get(),
         }
         dry_run = self._quiz_dryrun.get()
         ask_fn  = self._make_ask_fn()
-        q = self._log_queue
-        resume = self._resume_event
+        q       = self._log_queue
+        resume  = self._resume_event
 
         def pause_fn():
             if not resume.is_set():
@@ -568,11 +633,11 @@ class App(ctk.CTk):
                 def write(self, t):
                     if t.strip(): q.put(("quiz", t.rstrip()))
                 def flush(self): pass
-
             old, sys.stdout = sys.stdout, W()
             try:
                 from browser import run as browser_run
-                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn, ask_fn=ask_fn))
+                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
+                                        pause_fn=pause_fn, ask_fn=ask_fn))
             except Exception as e:
                 q.put(("quiz", f"✗  {e}"))
             finally:
@@ -603,10 +668,10 @@ class App(ctk.CTk):
         self._assign_log.delete("1.0", "end")
         self._assign_log.configure(state="disabled")
         settings = {"set_in_gradebook": self._assign_gradebook_var.get()}
-        dry_run = self._assign_dryrun.get()
-        ask_fn  = self._make_ask_fn()
-        q = self._log_queue
-        resume = self._resume_event
+        dry_run  = self._assign_dryrun.get()
+        ask_fn   = self._make_ask_fn()
+        q        = self._log_queue
+        resume   = self._resume_event
 
         def pause_fn():
             if not resume.is_set():
@@ -622,12 +687,14 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 from browser import run_assignments
-                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings, pause_fn=pause_fn, ask_fn=ask_fn))
+                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
+                                            pause_fn=pause_fn, ask_fn=ask_fn))
             except Exception as e:
                 q.put(("assign", f"✗  {e}"))
             finally:
                 sys.stdout = old
                 q.put(("assign", "__DONE__"))
+
         threading.Thread(target=worker, daemon=True).start()
 
     def _toggle_assign_pause(self):
@@ -637,6 +704,38 @@ class App(ctk.CTk):
         else:
             self._resume_event.set()
             self._assign_pause_btn.configure(text="⏸   PAUSE", fg_color="#555555")
+
+    # ── Timer Fix run ─────────────────────────────────────────────────────────
+
+    def _start_timer_fix(self):
+        urls = [e.get().strip() for _, e in self._tfix_url_rows if e.get().strip()]
+        if not urls:
+            self._append(self._tfix_log, "⚠  No URLs entered.")
+            return
+        self._tfix_run_btn.configure(state="disabled", text="Running…")
+        self._tfix_log.configure(state="normal")
+        self._tfix_log.delete("1.0", "end")
+        self._tfix_log.configure(state="disabled")
+        dry_run = self._tfix_dryrun.get()
+        ask_fn  = self._make_ask_fn()
+        q = self._log_queue
+
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("tfix", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                from browser import run_timer_fix
+                asyncio.run(run_timer_fix(urls=urls, dry_run=dry_run, ask_fn=ask_fn))
+            except Exception as e:
+                q.put(("tfix", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("tfix", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ── Course Outline run ────────────────────────────────────────────────────
 
@@ -649,25 +748,23 @@ class App(ctk.CTk):
             self._append(self._outline_log, "⚠  Course URL is required.")
             return
         if not email or not password:
-            self._append(self._outline_log, "⚠  CourseBridge email and password are required.")
+            self._append(self._outline_log, "⚠  CourseBridge credentials required — go to Settings.")
             return
 
         self._outline_run_btn.configure(state="disabled", text="Running…")
         self._outline_log.configure(state="normal")
         self._outline_log.delete("1.0", "end")
         self._outline_log.configure(state="disabled")
-
-        self._save_outline_config(course_url, email, password)
-        dry_run    = self._outline_dryrun.get()
-        prompter   = _GUIPrompter(self)
-        q          = self._log_queue
+        self._save_config(course_url=course_url, email=email, password=password)
+        dry_run  = self._outline_dryrun.get()
+        prompter = _GUIPrompter(self)
+        q        = self._log_queue
 
         def worker():
             class W:
                 def write(self, t):
                     if t.strip(): q.put(("outline", t.rstrip()))
                 def flush(self): pass
-
             old, sys.stdout = sys.stdout, W()
             try:
                 from course_outline_automator import run as outline_run
@@ -686,19 +783,15 @@ class App(ctk.CTk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ── Test Step 4 ───────────────────────────────────────────────────────────
-
     def _start_test_step4(self):
         course_url = self._outline_url.get().strip()
         if not course_url:
             self._append(self._outline_log, "⚠  Course URL or CRN is required.")
             return
-
         self._test_step4_btn.configure(state="disabled", text="Running…")
         self._outline_log.configure(state="normal")
         self._outline_log.delete("1.0", "end")
         self._outline_log.configure(state="disabled")
-
         q = self._log_queue
 
         def worker():
@@ -706,7 +799,6 @@ class App(ctk.CTk):
                 def write(self, t):
                     if t.strip(): q.put(("outline", t.rstrip()))
                 def flush(self): pass
-
             old, sys.stdout = sys.stdout, W()
             try:
                 from course_outline_automator import test_step4
@@ -717,8 +809,90 @@ class App(ctk.CTk):
                 sys.stdout = old
                 self.after(0, lambda: self._test_step4_btn.configure(
                     state="normal",
-                    text="▶   TEST STEP 4 ONLY  (paste existing HTML into Brightspace)"
+                    text="▶   TEST STEP 4 ONLY  (paste existing HTML into Brightspace)",
                 ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ── Staging run ───────────────────────────────────────────────────────────
+
+    def _start_staging_refresh(self):
+        self._save_config(
+            email=self._cb_email.get().strip(),
+            password=self._cb_password.get().strip(),
+        )
+        self._staging_refresh_btn.configure(state="disabled", text="Refreshing…")
+        self._staging_log.configure(state="normal")
+        self._staging_log.delete("1.0", "end")
+        self._staging_log.configure(state="disabled")
+        q = self._log_queue
+
+        def worker():
+            from staging_scraper import scrape, should_process
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("staging", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                courses  = asyncio.run(scrape())
+                filtered = [c for c in sorted(courses) if should_process(c)]
+                skipped  = len(courses) - len(filtered)
+                with open(str(_HERE / "staging_queue.txt"), "w", encoding="utf-8") as f:
+                    for c in filtered:
+                        f.write(c + "\n")
+                print(f"\n✓ Queue updated — {len(filtered)} course(s) to stage  ({skipped} skipped)")
+                for c in filtered:
+                    print(f"   {c}")
+            except Exception as e:
+                q.put(("staging", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                self.after(0, lambda: self._staging_refresh_btn.configure(
+                    state="normal", text="⟳   REFRESH QUEUE FROM COURSEBRIDGE",
+                ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _start_staging_step1(self):
+        crn = self._staging_crn.get().strip()
+        if not crn:
+            queue_file = str(_HERE / "staging_queue.txt")
+            try:
+                with open(queue_file) as f:
+                    lines = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+                if not lines:
+                    self._append(self._staging_log, "⚠  Staging queue is empty. Refresh first or enter a CRN.")
+                    return
+                course_code = lines[0]
+                from staging_scraper import extract_crn
+                crn = extract_crn(course_code) or course_code
+                self._append(self._staging_log, f"Using queue: {course_code}  (CRN: {crn})")
+            except FileNotFoundError:
+                self._append(self._staging_log, "⚠  No staging queue found. Refresh first or enter a CRN.")
+                return
+
+        self._staging_step1_btn.configure(state="disabled", text="Running…")
+        self._staging_log.configure(state="normal")
+        self._staging_log.delete("1.0", "end")
+        self._staging_log.configure(state="disabled")
+        dry_run = self._staging_dryrun.get()
+        q = self._log_queue
+
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("staging", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                from staging_automator import run_step1
+                asyncio.run(run_step1(crn, dry_run=dry_run))
+            except Exception as e:
+                q.put(("staging", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("staging", "__DONE__"))
 
         threading.Thread(target=worker, daemon=True).start()
 
