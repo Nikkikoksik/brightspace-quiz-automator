@@ -1,3 +1,11 @@
+## Working Style (mandatory)
+- Make ONE change at a time
+- Before making any change, explain what you're going to do and why
+- After making the change, stop and wait for me to confirm it worked
+- Never rewrite working code
+- Never change more than one file at a time unless I explicitly ask
+
+
 # Brightspace Quiz Automator
 
 Playwright-based GUI tool that bulk-updates quiz settings in Brightspace (D2L LMS) for Okanagan College instructors.

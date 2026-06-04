@@ -55,7 +55,7 @@ async def run_bs_login():
         await browser.close()
 
 
-async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None):
+async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None, review_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
         context = await browser.new_context(
@@ -124,6 +124,8 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
+        if review_fn:
+            review_fn()
         await browser.close()
 
 
@@ -194,7 +196,7 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
         await browser.close()
 
 
-async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None):
+async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None, review_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False, slow_mo=80,
@@ -267,4 +269,6 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
+        if review_fn:
+            review_fn()
         await browser.close()
