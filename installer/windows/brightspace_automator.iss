@@ -15,9 +15,8 @@ OutputDir=Output
 ; App source files (all .py to app root)
 Source: "..\..\*.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
-; Production launchers at app root
+; Production launcher at app root
 Source: "launch.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "launcher.pyw"; DestDir: "{app}"; Flags: ignoreversion
 ; Icon
 Source: "..\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Python installer (runs silently, then deletes itself)
