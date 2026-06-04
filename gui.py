@@ -650,11 +650,15 @@ class App(ctk.CTk):
 
         def ask(total, label):
             def show():
+                self.lift()
+                self.attributes("-topmost", True)
+                self.focus_force()
                 val = sd.askinteger(
                     "Start from",
                     f"Found {total} {label}(s).\n\nStart from which number?\n(Leave blank or cancel = start from 1)",
                     minvalue=1, maxvalue=total, initialvalue=1,
                 )
+                self.attributes("-topmost", False)
                 result[0] = val if val else 1
                 event.set()
             self.after(0, show)
