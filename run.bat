@@ -21,7 +21,12 @@ if "%PY%"=="" (
 %PY% -c "import customtkinter" >nul 2>&1
 if errorlevel 1 (
     echo Installing dependencies...
-    %PY% -m pip install customtkinter playwright pdf2docx
+    %PY% -m pip install customtkinter playwright pdf2docx watchdog
+)
+%PY% -c "import watchdog" >nul 2>&1
+if errorlevel 1 (
+    echo Installing watchdog...
+    %PY% -m pip install watchdog
 )
 
 %PY% -c "import playwright" >nul 2>&1
@@ -41,5 +46,5 @@ if not exist ".playwright_installed" (
 %PY% auto_update.py
 
 :: Launch
-%PY% gui.py
+%PY% dev.py
 pause

@@ -19,7 +19,7 @@ class Restarter(FileSystemEventHandler):
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()
             self._proc.wait()
-        print("\n── restarting gui.py ──")
+        print("\n-- restarting gui.py --")
         self._proc = subprocess.Popen(ENTRY)
 
     def on_modified(self, event):
