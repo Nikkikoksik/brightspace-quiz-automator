@@ -32,27 +32,49 @@ async def _find_menu_item(page: Page, text: str) -> dict | None:
 async def _find_action_button(page: Page, name: str) -> dict | None:
     """Find the Actions button for an item, scrolling down if needed. Returns {x, y}."""
     for _ in range(5):
-        coords = await page.evaluate(
+        # Scroll the button into center of viewport first
+        found = await page.evaluate(
             """(name) => {
                 function find(root) {
                     for (const btn of root.querySelectorAll('button[aria-haspopup="true"]')) {
                         const label = btn.getAttribute('aria-label') || '';
                         if (label.includes('Actions for') && label.includes(name)) {
-                            const r = btn.getBoundingClientRect();
-                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                            btn.scrollIntoView({ block: 'center', behavior: 'instant' });
+                            return true;
                         }
                     }
                     for (const el of root.querySelectorAll('*')) {
                         if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
                     }
-                    return null;
+                    return false;
                 }
                 return find(document);
             }""",
             name,
         )
-        if coords:
-            return coords
+        if found:
+            await page.wait_for_timeout(200)
+            coords = await page.evaluate(
+                """(name) => {
+                    function find(root) {
+                        for (const btn of root.querySelectorAll('button[aria-haspopup="true"]')) {
+                            const label = btn.getAttribute('aria-label') || '';
+                            if (label.includes('Actions for') && label.includes(name)) {
+                                const r = btn.getBoundingClientRect();
+                                if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                            }
+                        }
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                        }
+                        return null;
+                    }
+                    return find(document);
+                }""",
+                name,
+            )
+            if coords:
+                return coords
         await page.evaluate("window.scrollBy(0, 800)")
         await page.wait_for_timeout(400)
     return None
