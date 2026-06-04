@@ -9,6 +9,7 @@ downloads/
 coursebridge_preview.html
 .playwright_installed
 .idea/
+courses.txt
 staging_queue.txt
 .version
 _update.zip
