@@ -211,6 +211,8 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
         print(f"  Popup URL: {popup.url}")
         print(f"  Typing source course: {source_course!r}")
         body_frame = popup.frame(url="**/select_course_offering.d2l**")
+        inputs = await body_frame.evaluate("() => Array.from(document.querySelectorAll('input')).map(i => i.id + '/' + i.name + '/' + i.type)")
+        print(f"  DEBUG inputs: {inputs}")
         await body_frame.locator("#z_b").fill(source_course)
 
         print(f"\n{'─' * 50}")
