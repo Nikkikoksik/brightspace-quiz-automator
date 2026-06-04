@@ -28,7 +28,7 @@ async def _wait_for_login(page, context):
                 await page.wait_for_timeout(2000)
             except Exception:
                 pass
-            if "learn.okanagancollege.ca" in page.url and "microsoftonline.com" not in page.url:
+            if "/d2l/home" in page.url:
                 break
         if i % 10 == 0 and i > 0:
             print(f"  Still waiting... ({i * 3}s)  |  {page.url[:80]}")
