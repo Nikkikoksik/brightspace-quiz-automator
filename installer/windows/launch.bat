@@ -7,5 +7,4 @@ if not exist "%PY%" (
     pause & exit /b 1
 )
 "%PY%" auto_update.py
-"%PY%" gui.py
-pause
+start "" "%PYW%" gui.py

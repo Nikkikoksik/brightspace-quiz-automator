@@ -15,8 +15,9 @@ OutputDir=Output
 ; App source files (all .py to app root)
 Source: "..\..\*.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
-; Production launcher at app root
+; Production launchers at app root
 Source: "launch.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "launcher.vbs"; DestDir: "{app}"; Flags: ignoreversion
 ; Icon
 Source: "..\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Python installer (runs silently, then deletes itself)
@@ -33,8 +34,8 @@ Filename: "{app}\python\python.exe"; Parameters: "-m pip install --quiet customt
 Filename: "{app}\python\python.exe"; Parameters: "-m playwright install chromium"; StatusMsg: "Installing Chromium browser (one-time, ~3 min)..."
 
 [Icons]
-Name: "{userdesktop}\Brightspace Automator"; Filename: "{app}\launch.bat"; IconFilename: "{app}\icon.ico"; WorkingDir: "{app}"
-Name: "{group}\Brightspace Automator"; Filename: "{app}\launch.bat"; IconFilename: "{app}\icon.ico"; WorkingDir: "{app}"
+Name: "{userdesktop}\Brightspace Automator"; Filename: "{app}\launcher.vbs"; IconFilename: "{app}\icon.ico"; WorkingDir: "{app}"
+Name: "{group}\Brightspace Automator"; Filename: "{app}\launcher.vbs"; IconFilename: "{app}\icon.ico"; WorkingDir: "{app}"
 Name: "{group}\Uninstall"; Filename: "{uninstallexe}"
 
 [UninstallDelete]
