@@ -56,6 +56,8 @@ class App(ctk.CTk):
         self._url_rows     = []
         self._resume_event = threading.Event()
         self._resume_event.set()
+        self._last_quiz_urls   = []
+        self._last_assign_urls = []
 
         self._build_ui()
         self._load_courses()
@@ -606,7 +608,17 @@ class App(ctk.CTk):
                     "staging": self._staging_log,
                 }.get(tag, self._outline_log)
 
-                if msg == "__DONE__":
+                if msg == "__QUIZ_DONE__":
+                    self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
+                    self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
+                    self._resume_event.set()
+                    self.after(0, self._post_quiz_review)
+                elif msg == "__ASSIGN_DONE__":
+                    self._assign_run_btn.configure(state="normal", text="▶   RUN ASSIGNMENT AUTOMATOR")
+                    self._assign_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
+                    self._resume_event.set()
+                    self.after(0, self._post_assign_review)
+                elif msg == "__DONE__":
                     if tag == "quiz":
                         self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
                         self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
@@ -657,6 +669,7 @@ class App(ctk.CTk):
             self._append(self._quiz_log, "⚠  No URLs entered.")
             return
         self._save_courses(urls)
+        self._last_quiz_urls = urls
         self._quiz_run_btn.configure(state="disabled", text="Running…")
         self._quiz_pause_btn.configure(state="normal")
         self._resume_event.set()
@@ -678,21 +691,36 @@ class App(ctk.CTk):
                 resume.wait()
                 q.put(("quiz", "▶  Resuming..."))
 
+        review_event = threading.Event()
+
+        def review_fn():
+            def show():
+                messagebox.showinfo(
+                    "Quizzes Complete",
+                    "All quizzes processed.\n\n"
+                    "Review the browser for any errors, then click OK to close it.",
+                )
+                review_event.set()
+            self.after(0, show)
+            review_event.wait()
+
         def worker():
             class W:
                 def write(self, t):
                     if t.strip(): q.put(("quiz", t.rstrip()))
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
+            success = False
             try:
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
-                                        pause_fn=pause_fn, ask_fn=ask_fn))
+                                        pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
+                success = True
             except Exception as e:
                 q.put(("quiz", f"✗  {e}"))
             finally:
                 sys.stdout = old
-                q.put(("quiz", "__DONE__"))
+                q.put(("quiz", "__QUIZ_DONE__" if success else "__DONE__"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -711,6 +739,7 @@ class App(ctk.CTk):
         if not urls:
             self._append(self._assign_log, "⚠  No URLs entered.")
             return
+        self._last_assign_urls = urls
         self._assign_run_btn.configure(state="disabled", text="Running…")
         self._assign_pause_btn.configure(state="normal")
         self._resume_event.set()
@@ -729,21 +758,36 @@ class App(ctk.CTk):
                 resume.wait()
                 q.put(("assign", "▶  Resuming..."))
 
+        review_event = threading.Event()
+
+        def review_fn():
+            def show():
+                messagebox.showinfo(
+                    "Assignments Complete",
+                    "All assignments processed.\n\n"
+                    "Review the browser for any errors, then click OK to close it.",
+                )
+                review_event.set()
+            self.after(0, show)
+            review_event.wait()
+
         def worker():
             class W:
                 def write(self, t):
                     if t.strip(): q.put(("assign", t.rstrip()))
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
+            success = False
             try:
                 from browser import run_assignments
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
-                                            pause_fn=pause_fn, ask_fn=ask_fn))
+                                            pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
+                success = True
             except Exception as e:
                 q.put(("assign", f"✗  {e}"))
             finally:
                 sys.stdout = old
-                q.put(("assign", "__DONE__"))
+                q.put(("assign", "__ASSIGN_DONE__" if success else "__DONE__"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -754,6 +798,141 @@ class App(ctk.CTk):
         else:
             self._resume_event.set()
             self._assign_pause_btn.configure(text="⏸   PAUSE", fg_color="#555555")
+
+    # ── Post-run review prompts ───────────────────────────────────────────────
+
+    def _post_quiz_review(self):
+        if messagebox.askyesno(
+            "Run Assignments?",
+            "Would you also like to run the Assignment Automator\n"
+            "for the same course(s)?",
+        ):
+            self._run_assignments_for(self._last_quiz_urls)
+
+    def _post_assign_review(self):
+        if messagebox.askyesno(
+            "Run Quizzes?",
+            "Would you also like to run the Quiz Automator\n"
+            "for the same course(s)?",
+        ):
+            self._run_quizzes_for(self._last_assign_urls)
+
+    def _run_assignments_for(self, urls: list[str]):
+        """Start assignment run with given URLs, using current assignment-panel settings."""
+        if not urls:
+            return
+        self._show_panel("Assignment Automator")
+        self._last_assign_urls = urls
+        self._assign_run_btn.configure(state="disabled", text="Running…")
+        self._assign_pause_btn.configure(state="normal")
+        self._resume_event.set()
+        self._assign_log.configure(state="normal")
+        self._assign_log.delete("1.0", "end")
+        self._assign_log.configure(state="disabled")
+        settings = {"set_in_gradebook": self._assign_gradebook_var.get()}
+        dry_run  = self._assign_dryrun.get()
+        ask_fn   = self._make_ask_fn()
+        q        = self._log_queue
+        resume   = self._resume_event
+
+        def pause_fn():
+            if not resume.is_set():
+                q.put(("assign", "⏸  Paused — click Resume to continue..."))
+                resume.wait()
+                q.put(("assign", "▶  Resuming..."))
+
+        review_event2 = threading.Event()
+
+        def review_fn2():
+            def show():
+                messagebox.showinfo(
+                    "All Done!",
+                    "Quizzes and assignments are both complete.\n\n"
+                    "Review the browser for any errors, then click OK to close it.",
+                )
+                review_event2.set()
+            self.after(0, show)
+            review_event2.wait()
+
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("assign", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            success = False
+            try:
+                from browser import run_assignments
+                asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
+                                            pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn2))
+                success = True
+            except Exception as e:
+                q.put(("assign", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("assign", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_quizzes_for(self, urls: list[str]):
+        """Start quiz run with given URLs, using current quiz-panel settings."""
+        if not urls:
+            return
+        self._show_panel("Quiz Automator")
+        self._last_quiz_urls = urls
+        self._quiz_run_btn.configure(state="disabled", text="Running…")
+        self._quiz_pause_btn.configure(state="normal")
+        self._resume_event.set()
+        self._quiz_log.configure(state="normal")
+        self._quiz_log.delete("1.0", "end")
+        self._quiz_log.configure(state="disabled")
+        settings = {
+            "set_in_gradebook": self._gradebook_var.get(),
+            "set_auto_submit":  self._autosubmit_var.get(),
+        }
+        dry_run = self._quiz_dryrun.get()
+        ask_fn  = self._make_ask_fn()
+        q       = self._log_queue
+        resume  = self._resume_event
+
+        def pause_fn():
+            if not resume.is_set():
+                q.put(("quiz", "⏸  Paused — click Resume to continue..."))
+                resume.wait()
+                q.put(("quiz", "▶  Resuming..."))
+
+        review_event3 = threading.Event()
+
+        def review_fn3():
+            def show():
+                messagebox.showinfo(
+                    "All Done!",
+                    "Assignments and quizzes are both complete.\n\n"
+                    "Review the browser for any errors, then click OK to close it.",
+                )
+                review_event3.set()
+            self.after(0, show)
+            review_event3.wait()
+
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("quiz", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            success = False
+            try:
+                from browser import run as browser_run
+                asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
+                                        pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn3))
+                success = True
+            except Exception as e:
+                q.put(("quiz", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("quiz", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ── Timer Fix run ─────────────────────────────────────────────────────────
 
