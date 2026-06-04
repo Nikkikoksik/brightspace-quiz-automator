@@ -210,6 +210,7 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
 
         print(f"  Popup URL: {popup.url}")
         print(f"  Typing source course: {source_course!r}")
+        print(f"  DEBUG frames: {[(f.name, f.url[:80]) for f in popup.frames]}")
         body_frame = popup.frame(name="Body")
         await body_frame.locator("#z_b").fill(source_course)
 
