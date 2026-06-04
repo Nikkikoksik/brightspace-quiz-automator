@@ -210,11 +210,16 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
 
         print(f"  Popup URL: {popup.url}")
         print(f"  Typing source course: {source_course!r}")
-        body_frame = popup.frame(url="**/select_course_offering.d2l**")
-        print(f"  DEBUG body_frame URL: {body_frame.url}")
-        await body_frame.wait_for_load_state("domcontentloaded", timeout=15000)
-        inputs = await body_frame.evaluate("() => Array.from(document.querySelectorAll('input')).map(i => i.id + '/' + i.name + '/' + i.type)")
-        print(f"  DEBUG inputs: {inputs}")
+        body_frame = None
+        for frame in popup.frames:
+            try:
+                await frame.wait_for_selector("#z_b", timeout=2000)
+                body_frame = frame
+                break
+            except Exception:
+                continue
+        if body_frame is None:
+            raise Exception("Could not find search input (#z_b) in any popup frame")
         await body_frame.locator("#z_b").fill(source_course)
 
         print(f"\n{'─' * 50}")
