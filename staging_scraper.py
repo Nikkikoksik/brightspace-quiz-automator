@@ -33,13 +33,34 @@ def load_credentials():
         return "", ""
 
 
+# Trades department codes to process (without the -Migrated suffix)
+TRADES_CODES = {
+    "AMEC", "AMEM", "AMES", "ASTF", "AUME", "CAFD", "CARP", "CJFD",
+    "DCGA", "ELEC", "HMET", "HMFP", "HMTM", "PLMB", "PPTF", "RACM",
+    "RVTE", "SHMT", "WELD", "WDFD", "CLSN", "CRRD",
+}
+
+
+def get_dept(course_code: str) -> str:
+    """Extract department code — first segment before the first '-'."""
+    return course_code.split("-")[0].upper()
+
+
 def should_process(course_code: str) -> bool:
-    """Return True if the semester code (after the dot) ends in 10, 20, or 30."""
+    """Return True if semester ends in 10/20/30 AND department is a trades code."""
     m = re.search(r'\.(\d+)$', course_code)
     if not m:
         return False
     semester = m.group(1)
-    return semester.endswith("10") or semester.endswith("20") or semester.endswith("30")
+    ends_ok = semester.endswith("10") or semester.endswith("20") or semester.endswith("30")
+    return ends_ok and get_dept(course_code) in TRADES_CODES
+
+
+def sort_key(course_code: str) -> tuple:
+    """Sort 202530 courses first, then alphabetically."""
+    m = re.search(r'\.(\d+)$', course_code)
+    semester = m.group(1) if m else ""
+    return (0 if semester == "202530" else 1, course_code)
 
 
 async def scrape() -> list[str]:
@@ -214,18 +235,20 @@ async def main():
         print("No courses found.")
         return
 
-    filtered = [c for c in sorted(courses) if should_process(c)]
+    filtered = sorted([c for c in courses if should_process(c)], key=sort_key)
     skipped  = [c for c in sorted(courses) if not should_process(c)]
 
     print(f"\n{'─' * 50}")
-    print(f"Total courses found : {len(courses)}")
-    print(f"To process (10/20/30): {len(filtered)}")
-    print(f"Skipped             : {len(skipped)}")
+    print(f"Total courses found  : {len(courses)}")
+    print(f"Trades to process    : {len(filtered)}  (202530 first)")
+    print(f"Skipped              : {len(skipped)}")
     print(f"{'─' * 50}")
 
     print("\n✓ Courses to process:")
     for c in filtered:
-        print(f"   {c}")
+        m = re.search(r'\.(\d+)$', c)
+        tag = " ← 202530" if m and m.group(1) == "202530" else ""
+        print(f"   {c}{tag}")
 
     print("\n✗ Skipped:")
     for c in skipped:
