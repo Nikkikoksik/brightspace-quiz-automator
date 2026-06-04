@@ -222,8 +222,31 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
             raise Exception("Could not find search input (#z_b) in any popup frame")
         await body_frame.locator("#z_b").fill(source_course)
 
+        # Click Search button
+        print("  Clicking Search...")
+        await body_frame.locator("input[value='Search'], button:has-text('Search')").first.click()
+        await body_frame.wait_for_load_state("domcontentloaded", timeout=15000)
+        await body_frame.wait_for_timeout(1000)
+
+        # Select matching result radio button (row whose offering code contains the CRN)
+        print("  Selecting matching result...")
+        crn = extract_crn(source_course) if "." in source_course else source_course.strip()
+        rows = await body_frame.locator("tr").all()
+        selected = False
+        for row in rows:
+            text = await row.inner_text()
+            if crn in text:
+                radio = row.locator("input[type='radio']")
+                if await radio.count() > 0:
+                    await radio.first.click()
+                    print(f"  ✓ Selected row: {text.strip()[:80]}")
+                    selected = True
+                    break
+        if not selected:
+            print("  ⚠ No matching row found — check the popup manually")
+
         print(f"\n{'─' * 50}")
-        print("✓ Step 2 — search field filled. Ready for next step.")
+        print("✓ Step 2 — result selected. Ready for next step.")
         input("  Press Enter to close...")
         await browser.close()
 
