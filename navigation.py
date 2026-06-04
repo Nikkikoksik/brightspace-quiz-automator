@@ -1,16 +1,24 @@
 from playwright.async_api import Page
 
 
-async def _find_action_button(page: Page, name: str):
-    """Find the Actions button for an item, scrolling down if needed."""
+async def _find_action_button(page: Page, name: str) -> dict | None:
+    """Find the Actions button for an item, scrolling down if needed. Returns {x, y}."""
     for _ in range(5):
-        buttons = await page.locator(
-            "button[aria-haspopup='true'][aria-label*='Actions for']"
-        ).all()
-        for b in buttons:
-            label = await b.get_attribute("aria-label")
-            if label and name in label:
-                return b
+        coords = await page.evaluate(
+            """(name) => {
+                for (const btn of document.querySelectorAll('button[aria-haspopup="true"]')) {
+                    const label = btn.getAttribute('aria-label') || '';
+                    if (label.includes('Actions for') && label.includes(name)) {
+                        const r = btn.getBoundingClientRect();
+                        if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                    }
+                }
+                return null;
+            }""",
+            name,
+        )
+        if coords:
+            return coords
         await page.evaluate("window.scrollBy(0, 800)")
         await page.wait_for_timeout(400)
     return None
@@ -42,10 +50,10 @@ async def get_assignment_names(page: Page) -> list[str]:
 
 async def open_assignment_edit(page: Page, name: str):
     """Open the Actions dropdown for an assignment and click Edit."""
-    btn = await _find_action_button(page, name)
-    if btn is None:
+    coords = await _find_action_button(page, name)
+    if coords is None:
         raise Exception(f"Actions button for '{name}' not found")
-    await btn.click()
+    await page.mouse.click(coords["x"], coords["y"])
     await page.wait_for_timeout(400)
     edit = page.locator(
         "d2l-menu-item[text='Edit Folder'], d2l-menu-item[text='Edit Assignment'], "
@@ -82,10 +90,10 @@ async def get_quiz_names(page: Page) -> list[str]:
 
 async def open_quiz_edit(page: Page, name: str):
     """Open the Actions dropdown for a quiz and click Edit."""
-    btn = await _find_action_button(page, name)
-    if btn is None:
+    coords = await _find_action_button(page, name)
+    if coords is None:
         raise Exception(f"Actions button for '{name}' not found")
-    await btn.click()
+    await page.mouse.click(coords["x"], coords["y"])
     await page.wait_for_timeout(400)
     await page.locator("d2l-menu-item[text='Edit']").first.click()
     await page.wait_for_load_state("domcontentloaded")

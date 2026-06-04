@@ -17,9 +17,7 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
 
 from browser import run
-from config import SETTINGS
-
-COURSES_FILE = "courses.txt"
+from config import SETTINGS, COURSES_FILE
 
 
 def load_courses() -> list[str]:

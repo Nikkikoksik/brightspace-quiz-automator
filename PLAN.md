@@ -6,39 +6,64 @@ Check off each goal as it's confirmed working.
 
 ## In Progress
 
-- [ ] **Step 4 — Paste HTML into Brightspace**
-  - Found the `Options` button at (1104, 195)
-  - Fixed Edit detection to check `text`/`aria-label` on `d2l-menu-item`
-  - **Next action:** Run without dry-run and confirm it gets past the Edit click
+- [ ] **Full Staging Automation — building step by step**
+  - [x] Scrape Ready to Send list from lms.harshsaw.ca → staging_queue.txt
+  - [x] Filter for semester codes ending in 10/20/30
+  - [x] `find_staging_shell(page, crn)` — searches Brightspace, returns _Staged URL
+  - [x] Test `find_staging_shell` against a real CRN
+  - [x] Step 1: Hide "How to Use This Blueprint" module (switch found in smart-curriculum iframe)
+  - [ ] Step 2: Copy Components
+  - [ ] Step 3: Course Outline (already built)
+  - [ ] Step 4: Gradebook (leave for later)
+  - [ ] Step 5: Re-label to "Ready"
+
+- [x] **Assignment Automator — Gradebook not saving** — resolved
 
 ---
 
 ## Up Next
 
-- [ ] **Per-step test buttons in the GUI**
-  - Add 4 buttons to the Course Outline tab: Test Step 1 / 2 / 3 / 4
-  - Each runs just that step so you don't have to sit through the whole pipeline
+- [ ] **Course Outline — Step 4 full test with real HTML**
+  - TinyMCE `setContent()` works ✅
+  - Need to confirm the two-save flow actually saves to Brightspace
 
-- [ ] **Auto-download for "Course Outline" topic**
-  - Currently falls back to manual download every time
-  - Need to identify what the download button looks like on that topic type
+- [ ] **Quiz Automator — Skip timer if already set**
+  - Gradebook: already skips ✅
+  - Timer auto-submit: no skip check yet
+
+- [ ] **Per-step test buttons (Steps 1–3)**
+  - Step 4 test button done ✅
+  - Steps 1, 2, 3 test buttons not built yet
 
 ---
 
 ## Done
 
-- [x] run.bat fixed
-- [x] GUI with two tabs (Quiz + Course Outline)
+- [x] run.bat — auto-installs dependencies on first run
+- [x] run.bat — checks for updates from GitHub on every launch
+- [x] Playwright browser installed once, not every launch
+- [x] GUI with three tabs (Quiz / Assignment / Course Outline)
 - [x] Quiz automator — gradebook + auto-submit settings
+- [x] Quiz automator — skip if already in gradebook
+- [x] Quiz automator — timer wait increased to 30s (was 6s)
+- [x] Assignment automator — tab + run button wired up
+- [x] Pause / Resume button — Quiz tab
+- [x] Pause / Resume button — Assignment tab
 - [x] Course URLs saved between runs
 - [x] CourseBridge credentials saved between runs
 - [x] Step 1 — Find course outline via Brightspace API
-- [x] Step 1 — CRN lookup working (shadow DOM fix)
+- [x] Step 1 — CRN lookup (shadow DOM fix)
 - [x] Step 1 — Confirm before downloading, open file in Windows for review
 - [x] Step 1 — Downloads saved to `downloads/` folder
+- [x] Step 1 — Search only for "outline"
 - [x] Step 2 — PDF → DOCX conversion
 - [x] Step 3 — CourseBridge upload + conversion
 - [x] Step 3 — HTML preview opens in Notepad
+- [x] Step 4 — Navigate to Course Syllabus topic via API
+- [x] Step 4 — Click Options → Edit via shadow DOM
+- [x] Step 4 — Set content via TinyMCE API
+- [x] Step 4 — Test Step 4 button in GUI
 - [x] Login wait — confirms on /d2l/home before saving session
 - [x] Friend's session persistence fixed
-- [x] .gitignore covers all sensitive files and generated folders
+- [x] staging_scraper.py — scrape + filter course list
+- [x] STAGING_PROCESS.md documented
