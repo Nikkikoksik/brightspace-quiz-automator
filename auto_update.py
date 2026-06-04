@@ -107,9 +107,13 @@ def main():
 
     print(f"  New version available — updating...")
     if download_and_extract(remote_sha):
-        print("  ✓ Updated successfully — restarting...")
         cleanup()
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        print("  ✓ Updated successfully.")
+        ans = input("  Restart now to apply the update? (y/n): ").strip().lower()
+        if ans == "y":
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        else:
+            print("  Skipping restart — update will apply next launch.")
     else:
         print("  Update failed — running current version")
         cleanup()
