@@ -199,8 +199,8 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
         }
     """)
     if not dl_coords:
-        print(f"  ⚠ No download button found for '{title}'")
-        return None
+        print(f"  ⚠ No download button found for '{title}' — falling back to manual download")
+        return await _manual_download_fallback(page, download_dir, prompt_fn)
 
     print(f"  ✓ Found '{dl_coords['label']}' — clicking...")
     async with page.expect_download(timeout=30000) as dl_info:
