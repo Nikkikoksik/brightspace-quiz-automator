@@ -6,14 +6,20 @@ async def _find_action_button(page: Page, name: str) -> dict | None:
     for _ in range(5):
         coords = await page.evaluate(
             """(name) => {
-                for (const btn of document.querySelectorAll('button[aria-haspopup="true"]')) {
-                    const label = btn.getAttribute('aria-label') || '';
-                    if (label.includes('Actions for') && label.includes(name)) {
-                        const r = btn.getBoundingClientRect();
-                        if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                function find(root) {
+                    for (const btn of root.querySelectorAll('button[aria-haspopup="true"]')) {
+                        const label = btn.getAttribute('aria-label') || '';
+                        if (label.includes('Actions for') && label.includes(name)) {
+                            const r = btn.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                        }
                     }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    }
+                    return null;
                 }
-                return null;
+                return find(document);
             }""",
             name,
         )
