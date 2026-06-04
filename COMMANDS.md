@@ -12,31 +12,92 @@ py gui.py
 
 ---
 
-## Git — Daily Use
+## Git — Step 0: Make sure you're in the right folder
 
 ```powershell
-# See what's changed locally
-git status
-
-# Pull latest changes from GitHub (e.g. after your friend pushes)
-git pull
-
-# Push your changes to GitHub
-git add -A
-git commit -m "describe what you changed"
-git push
-
-# See recent commits
-git log --oneline -10
+cd "c:\Users\300353682\OneDrive - Okanagan College\Desktop\Quiz automator\brightspace-quiz-automator"
 ```
+> If you're one level up in `Quiz automator`, git commands will fail or affect the wrong files.
 
 ---
 
-## Git — If Push Is Rejected (friend pushed first)
+## Git — Step 0b: Check which branch you're on
 
 ```powershell
+git branch
+```
+> The branch with `*` is your current one. You should always be on `nick` when making changes.
+> If you're not: `git checkout nick`
+
+---
+
+## Git — Before Starting Work (run every session)
+
+```powershell
+git fetch
+```
+> Downloads latest changes from GitHub. Nothing changes locally yet — safe to run anytime.
+
+```powershell
+git checkout dev
 git pull
-git push
+```
+> Switches to `dev` and pulls your teammates' latest changes.
+
+```powershell
+git checkout nick
+git pull origin nick --rebase
+```
+> Switches back to your branch and pulls any changes you pushed from another machine.
+
+```powershell
+git rebase dev
+```
+> Replays your `nick` commits on top of the latest `dev`. Keeps you current without touching anyone else's branch.
+
+```powershell
+git push origin nick --force-with-lease
+```
+> Pushes your updated `nick` branch to GitHub. `--force-with-lease` is required after a rebase and is safe on your personal branch.
+
+---
+
+## Git — After Making and Committing a Change
+
+```powershell
+git add <filename>
+git commit -m "describe what you changed"
+```
+> Stage and commit your change. Use specific filenames instead of `git add -A` to avoid accidentally committing unrelated files.
+
+```powershell
+git fetch
+git checkout dev
+git pull
+git checkout nick
+git rebase dev
+git push origin nick --force-with-lease
+```
+> Sync with the latest `dev` then push your change to `nick`.
+
+---
+
+## Git — Merging to Dev (only when change is confirmed working)
+
+```powershell
+git checkout dev
+git merge nick
+git push origin dev
+git checkout nick
+```
+> Only do this after confirming the feature works. Never commit directly to `dev`.
+
+---
+
+## Git — See Recent Commits
+
+```powershell
+git log --oneline -10
 ```
 
 ---
