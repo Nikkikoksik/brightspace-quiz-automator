@@ -121,6 +121,25 @@ async def get_quiz_names(page: Page) -> list[str]:
     return names
 
 
+async def _dump_menu_items(page: Page) -> list[str]:
+    """Return all d2l-menu-item text values found in the DOM (for diagnostics)."""
+    return await page.evaluate("""() => {
+        const results = [];
+        function find(root) {
+            for (const el of root.querySelectorAll('d2l-menu-item')) {
+                const t = (el.getAttribute('text') || el.textContent || '').trim();
+                const r = el.getBoundingClientRect();
+                results.push(`"${t}" (visible=${r.width > 0})`);
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) find(el.shadowRoot);
+            }
+        }
+        find(document);
+        return results;
+    }""")
+
+
 async def open_quiz_edit(page: Page, name: str):
     """Open the Actions dropdown for a quiz and click Edit."""
     coords = await _find_action_button(page, name)
@@ -130,6 +149,8 @@ async def open_quiz_edit(page: Page, name: str):
     await page.wait_for_timeout(400)
     edit_coords = await _find_menu_item(page, "Edit")
     if edit_coords is None:
+        items = await _dump_menu_items(page)
+        print(f"  DEBUG menu items found: {items}")
         raise Exception(f"Edit menu item for '{name}' not found")
     await page.mouse.click(edit_coords["x"], edit_coords["y"])
     await page.wait_for_load_state("domcontentloaded")
