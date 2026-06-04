@@ -259,9 +259,15 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
             raise Exception("Could not find 'Add Selected' button in any popup frame")
         await add_frame.locator("button:has-text('Add Selected')").first.click()
         await page.wait_for_load_state("domcontentloaded", timeout=15000)
+        await page.wait_for_timeout(1000)
+
+        # Click Copy All Components
+        print("  Clicking Copy All Components...")
+        await page.locator("button:has-text('Copy All Components')").first.click()
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
 
         print(f"\n{'─' * 50}")
-        print("✓ Step 2 — offering selected. Ready for next step.")
+        print("✓ Step 2 — Copy All Components clicked. Ready for next step.")
         input("  Press Enter to close...")
         await browser.close()
 
