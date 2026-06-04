@@ -116,12 +116,33 @@ async def find_staging_shell(page, crn: str) -> str | None:
     """
     print(f"  Searching Brightspace for CRN {crn}...")
 
-    # Click the "Select a course..." button (inside shadow DOM)
+    # Wait for the navigation bar to render the course picker button
+    try:
+        await page.wait_for_function("""
+            () => {
+                function walk(root) {
+                    for (const el of root.querySelectorAll('button')) {
+                        if (el.getAttribute('aria-label') === 'Select a course...')
+                            return el.getBoundingClientRect().width > 0;
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot && walk(el.shadowRoot)) return true;
+                    }
+                    return false;
+                }
+                return walk(document);
+            }
+        """, timeout=15000)
+    except Exception:
+        print("  ✗ Course picker button did not appear within 15s")
+        return None
+
+    # Click the "Select a course..." button
     btn = await page.evaluate("""
         () => {
             function walk(root) {
                 for (const el of root.querySelectorAll('button')) {
-                    if ((el.getAttribute('aria-label') || '') === 'Select a course...') {
+                    if (el.getAttribute('aria-label') === 'Select a course...') {
                         const r = el.getBoundingClientRect();
                         if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
                     }
@@ -135,7 +156,7 @@ async def find_staging_shell(page, crn: str) -> str | None:
         }
     """)
     if not btn:
-        print("  ✗ Could not find 'Select a course...' button")
+        print("  ✗ Could not find course picker button after wait")
         return None
 
     await page.mouse.click(btn["x"], btn["y"])

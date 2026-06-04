@@ -10,17 +10,14 @@ Check off each goal as it's confirmed working.
   - [x] Scrape Ready to Send list from lms.harshsaw.ca → staging_queue.txt
   - [x] Filter for semester codes ending in 10/20/30
   - [x] `find_staging_shell(page, crn)` — searches Brightspace, returns _Staged URL
-  - [ ] Test `find_staging_shell` against a real CRN
-  - [ ] Step 1: Hide "How to Use This Blueprint" module
-  - [ ] Step 2: Copy Components (leave for later)
+  - [x] Test `find_staging_shell` against a real CRN
+  - [x] Step 1: Hide "How to Use This Blueprint" module (switch found in smart-curriculum iframe)
+  - [ ] Step 2: Copy Components
   - [ ] Step 3: Course Outline (already built)
   - [ ] Step 4: Gradebook (leave for later)
   - [ ] Step 5: Re-label to "Ready"
 
-- [ ] **Assignment Automator — Gradebook not saving**
-  - Popup dialog appears after "Add to Grade Book" is clicked
-  - Need to confirm what button the dialog shows (OK / Add / Create?)
-  - Pause button added to help debug
+- [x] **Assignment Automator — Gradebook not saving** — resolved
 
 ---
 

@@ -27,45 +27,61 @@ def _extract_ou(href: str) -> str | None:
     return m.group(1) if m else None
 
 
+_FIND_SWITCH_JS = """
+    () => {
+        function walk(root) {
+            for (const el of root.querySelectorAll('d2l-switch')) {
+                const r = el.getBoundingClientRect();
+                if (r.width > 0) {
+                    return {
+                        x:     r.left + r.width  / 2,
+                        y:     r.top  + r.height / 2,
+                        on:    el.hasAttribute('on'),
+                        label: el.getAttribute('aria-label') || el.getAttribute('text') || '',
+                    };
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
+            }
+            return null;
+        }
+        return walk(document);
+    }
+"""
+
+
 async def hide_blueprint_module(page, dry_run: bool = False) -> bool:
     """
     Toggle off the first d2l-switch on the Content page (the blueprint module).
-    Returns True if hidden (or already hidden), False if switch not found.
+    Searches the main document and all iframes. Returns True if hidden (or already hidden).
     """
-    result = await page.evaluate("""
-        () => {
-            function walk(root) {
-                for (const el of root.querySelectorAll('d2l-switch')) {
-                    const r = el.getBoundingClientRect();
-                    if (r.width > 0) {
-                        return {
-                            x:       r.left + r.width  / 2,
-                            y:       r.top  + r.height / 2,
-                            checked: el.getAttribute('aria-checked') === 'true',
-                            label:   el.getAttribute('aria-label') || el.getAttribute('text') || '',
-                        };
-                    }
-                }
-                for (const el of root.querySelectorAll('*')) {
-                    if (el.shadowRoot) {
-                        const c = walk(el.shadowRoot);
-                        if (c) return c;
-                    }
-                }
-                return null;
-            }
-            return walk(document);
-        }
-    """)
+    await page.wait_for_load_state("networkidle", timeout=20000)
+    await page.wait_for_timeout(2000)
+
+    frames = page.frames
+
+    # Search main frame and every iframe
+    result = None
+    found_frame = None
+    for frame in frames:
+        try:
+            r = await frame.evaluate(_FIND_SWITCH_JS)
+            if r:
+                result = r
+                found_frame = frame
+                break
+        except Exception:
+            continue
 
     if not result:
-        print("  ✗ No d2l-switch found on this page")
+        print("  ✗ No d2l-switch found in any frame")
         return False
 
     label = result["label"] or "(no label)"
-    print(f"  Found switch: {label!r}  checked={result['checked']}")
+    print(f"  Found switch: {label!r}  on={result['on']}  frame={found_frame.url[:60]}")
 
-    if not result["checked"]:
+    if not result["on"]:
         print("  ✓ Already hidden — nothing to do")
         return True
 
@@ -73,7 +89,17 @@ async def hide_blueprint_module(page, dry_run: bool = False) -> bool:
         print("  ⚠ DRY RUN — would click switch to hide")
         return True
 
-    await page.mouse.click(result["x"], result["y"])
+    # For iframes, getBoundingClientRect coords are relative to the iframe viewport.
+    # Add the iframe's page-level offset to get the true page coordinates.
+    x, y = result["x"], result["y"]
+    if found_frame != page.main_frame:
+        frame_el = await found_frame.frame_element()
+        box = await frame_el.bounding_box()
+        if box:
+            x += box["x"]
+            y += box["y"]
+
+    await page.mouse.click(x, y)
     await page.wait_for_timeout(1500)
     print("  ✓ Module hidden")
     return True

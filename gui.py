@@ -416,14 +416,32 @@ class App(ctk.CTk):
         self._cb_password = ctk.CTkEntry(cf, height=36, show="●")
         self._cb_password.pack(fill="x", padx=16, pady=(0, 14))
 
-        self._section_label(body, "BRIGHTSPACE")
+        self._section_label(body, "BRIGHTSPACE SESSION")
         bf = ctk.CTkFrame(body)
         bf.pack(fill="x", pady=(0, 16))
-        ctk.CTkLabel(
+
+        session_exists = os.path.exists(str(_HERE / "session.json"))
+        self._bs_status = ctk.CTkLabel(
             bf,
-            text="Your session is saved automatically after first login.\nNo credentials needed here.",
-            font=ctk.CTkFont(size=12), text_color="gray", justify="left",
-        ).pack(anchor="w", padx=16, pady=14)
+            text="✓  Session saved" if session_exists else "✗  No session — log in first",
+            font=ctk.CTkFont(size=12),
+            text_color="#4caf50" if session_exists else "#f0a500",
+            justify="left",
+        )
+        self._bs_status.pack(anchor="w", padx=16, pady=(14, 8))
+
+        btn_row = ctk.CTkFrame(bf, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(0, 14))
+        self._bs_login_btn = ctk.CTkButton(
+            btn_row, text="Login to Brightspace", width=180, height=36,
+            command=self._start_bs_login,
+        )
+        self._bs_login_btn.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            btn_row, text="Clear Session", width=120, height=36,
+            fg_color="#4a2a2a", hover_color="#6a3a3a",
+            command=self._clear_bs_session,
+        ).pack(side="left")
 
         self._save_settings_btn = ctk.CTkButton(
             body, text="Save Settings", height=42, width=160,
@@ -462,6 +480,38 @@ class App(ctk.CTk):
             cfg["cb_password"] = password
         with open(OUTLINE_CFG, "w") as f:
             json.dump(cfg, f)
+
+    def _start_bs_login(self):
+        self._bs_login_btn.configure(state="disabled", text="Opening browser…")
+        q = self._log_queue
+
+        def worker():
+            from browser import run_bs_login
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("outline", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                asyncio.run(run_bs_login())
+                self.after(0, lambda: self._bs_status.configure(
+                    text="✓  Session saved", text_color="#4caf50"
+                ))
+            except Exception as e:
+                q.put(("outline", f"✗  Login failed: {e}"))
+            finally:
+                sys.stdout = old
+                self.after(0, lambda: self._bs_login_btn.configure(
+                    state="normal", text="Login to Brightspace"
+                ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _clear_bs_session(self):
+        session_file = str(_HERE / "session.json")
+        if os.path.exists(session_file):
+            os.remove(session_file)
+        self._bs_status.configure(text="✗  No session — log in first", text_color="#f0a500")
 
     def _save_settings(self):
         self._save_config(
@@ -880,13 +930,13 @@ class App(ctk.CTk):
         q = self._log_queue
 
         def worker():
+            from staging_automator import run_step1
             class W:
                 def write(self, t):
                     if t.strip(): q.put(("staging", t.rstrip()))
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
             try:
-                from staging_automator import run_step1
                 asyncio.run(run_step1(crn, dry_run=dry_run))
             except Exception as e:
                 q.put(("staging", f"✗  {e}"))
