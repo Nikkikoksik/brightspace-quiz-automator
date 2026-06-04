@@ -264,10 +264,16 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
         # Click Copy All Components
         print("  Clicking Copy All Components...")
         await page.locator("button:has-text('Copy All Components')").first.click()
+
+        # Wait for copy to finish — can take a long time
+        print("  Waiting for copy to complete (this may take a while)...")
+        await page.wait_for_selector("button:has-text('View Content')", timeout=300000)
+        print("  ✓ Copy complete — clicking View Content...")
+        await page.locator("button:has-text('View Content')").first.click()
         await page.wait_for_load_state("domcontentloaded", timeout=15000)
 
         print(f"\n{'─' * 50}")
-        print("✓ Step 2 — Copy All Components clicked. Ready for next step.")
+        print("✓ Step 2 — components copied. Ready for next step.")
         input("  Press Enter to close...")
         await browser.close()
 
