@@ -56,6 +56,7 @@ jobs:
   release:
     needs: [get-version, build-windows, build-mac]
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
@@ -64,13 +65,13 @@ jobs:
         with:
           name: BrightspaceAutomator-Setup
           path: dist-win
-          
+
       - name: Download Mac Artifact
         uses: actions/download-artifact@v4
         with:
           name: BrightspaceAutomator-Mac
           path: dist-mac
-          
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
