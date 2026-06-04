@@ -3,41 +3,34 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 
 WATCH_DIR = Path(__file__).parent
-ENTRY = [sys.executable, "gui.py"]
+ENTRY = [sys.executable, str(WATCH_DIR / "gui.py")]
+POLL_INTERVAL = 1  # seconds
 
 
-class Restarter(FileSystemEventHandler):
-    def __init__(self):
-        self._proc = None
-        self._restart()
-
-    def _restart(self):
-        if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
-            self._proc.wait()
-        print("\n-- restarting gui.py --")
-        self._proc = subprocess.Popen(ENTRY)
-
-    def on_modified(self, event):
-        if not event.is_directory and event.src_path.endswith(".py"):
-            self._restart()
+def get_mtimes():
+    return {f: f.stat().st_mtime for f in WATCH_DIR.glob("*.py")}
 
 
 if __name__ == "__main__":
-    handler = Restarter()
-    observer = Observer()
-    observer.schedule(handler, str(WATCH_DIR), recursive=False)
-    observer.start()
     print(f"Watching {WATCH_DIR} for .py changes  (Ctrl+C to stop)")
+    proc = subprocess.Popen(ENTRY)
+    mtimes = get_mtimes()
+
     try:
         while True:
-            time.sleep(1)
+            time.sleep(POLL_INTERVAL)
+            new_mtimes = get_mtimes()
+            changed = [f.name for f, t in new_mtimes.items() if mtimes.get(f) != t]
+            if changed:
+                print(f"-- changed: {changed} -- restarting gui.py --")
+                mtimes = new_mtimes
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait()
+                proc = subprocess.Popen(ENTRY)
     except KeyboardInterrupt:
-        observer.stop()
-        if handler._proc and handler._proc.poll() is None:
-            handler._proc.terminate()
-    observer.join()
+        if proc.poll() is None:
+            proc.terminate()
+        print("\nStopped.")
