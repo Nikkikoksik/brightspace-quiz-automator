@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit
+from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls
 from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment
 
 SESSION_FILE = str(Path(__file__).parent / "session.json")
@@ -62,15 +62,22 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
 
         await _wait_for_login(page, context)
 
-        for course_url in urls:
+        for raw_url in urls:
             print(f"\n{'─' * 50}")
-            print(f"Course: {course_url}")
+            print(f"Course: {raw_url}")
+
+            print("  Discovering quiz URL from course page...")
+            found = await discover_course_urls(page, raw_url)
+            quiz_url = found.get("quizzes")
+            if not quiz_url:
+                print("✗ Could not find Quizzes link on this course page.")
+                continue
+            print(f"  Quiz list: {quiz_url}")
 
             try:
-                await page.goto(course_url, wait_until="commit")
+                await page.goto(quiz_url, wait_until="commit")
             except Exception:
                 pass
-            print("Waiting for quizzes page...")
             await page.wait_for_url("**/quizzing/**", timeout=60000)
             await page.wait_for_load_state("networkidle")
             await context.storage_state(path=SESSION_FILE)
@@ -97,7 +104,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             for i, name in enumerate(names, start_from):
                 print(f"\n[{i}/{total}]  [{name}]")
                 try:
-                    await page.goto(course_url, wait_until="commit")
+                    await page.goto(quiz_url, wait_until="commit")
                 except Exception:
                     pass
                 await page.wait_for_selector(
@@ -128,12 +135,20 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
 
         await _wait_for_login(page, context)
 
-        for course_url in urls:
+        for raw_url in urls:
             print(f"\n{'─' * 50}")
-            print(f"Course: {course_url}")
+            print(f"Course: {raw_url}")
+
+            print("  Discovering quiz URL from course page...")
+            found = await discover_course_urls(page, raw_url)
+            quiz_url = found.get("quizzes")
+            if not quiz_url:
+                print("✗ Could not find Quizzes link on this course page.")
+                continue
+            print(f"  Quiz list: {quiz_url}")
 
             try:
-                await page.goto(course_url, wait_until="commit")
+                await page.goto(quiz_url, wait_until="commit")
             except Exception:
                 pass
             await page.wait_for_url("**/quizzing/**", timeout=60000)
@@ -159,7 +174,7 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
             for i, name in enumerate(names, start_from):
                 print(f"\n[{i}/{total}]  [{name}]")
                 try:
-                    await page.goto(course_url, wait_until="commit")
+                    await page.goto(quiz_url, wait_until="commit")
                 except Exception:
                     pass
                 await page.wait_for_selector(
@@ -190,12 +205,20 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
 
         await _wait_for_login(page, context)
 
-        for course_url in urls:
+        for raw_url in urls:
             print(f"\n{'─' * 50}")
-            print(f"Course: {course_url}")
+            print(f"Course: {raw_url}")
+
+            print("  Discovering assignment URL from course page...")
+            found = await discover_course_urls(page, raw_url)
+            asgn_url = found.get("assignments")
+            if not asgn_url:
+                print("✗ Could not find Assignments link on this course page.")
+                continue
+            print(f"  Assignment list: {asgn_url}")
 
             try:
-                await page.goto(course_url, wait_until="commit")
+                await page.goto(asgn_url, wait_until="commit")
             except Exception:
                 pass
             await page.wait_for_selector(
@@ -208,7 +231,7 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             names = await get_assignment_names(page)
             print(f"  Found names: {names}")
             if not names:
-                print("✗ No assignments found — check the URL points to the Assignments list page.")
+                print("✗ No assignments found.")
                 continue
 
             total = len(names)
@@ -225,7 +248,7 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             for i, name in enumerate(names, start_from):
                 print(f"\n[{i}/{total}]  [{name}]")
                 try:
-                    await page.goto(course_url, wait_until="commit")
+                    await page.goto(asgn_url, wait_until="commit")
                 except Exception:
                     pass
                 await page.wait_for_selector(

@@ -35,6 +35,59 @@ def resolve_assignment_url(url: str) -> str:
     return f"{BS_BASE}/d2l/lms/dropbox/user/folders_list.d2l?ou={ou}"
 
 
+async def discover_course_urls(page: Page, course_url: str) -> dict:
+    """Navigate to a course page and extract quiz/assignment URLs from the nav shadow DOM."""
+    try:
+        await page.goto(course_url, wait_until="domcontentloaded", timeout=30000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(2000)
+
+    found = await page.evaluate("""
+        () => {
+            function walk(root) {
+                const result = {};
+                for (const el of root.querySelectorAll('d2l-menu-item')) {
+                    const text = (el.getAttribute('text') || '').toLowerCase().trim();
+                    const href = el.getAttribute('href') || '';
+                    if (href) {
+                        const abs = new URL(href, location.origin).href;
+                        if (text === 'quizzes')     result.quizzes     = abs;
+                        if (text === 'assignments') result.assignments = abs;
+                    }
+                }
+                for (const a of root.querySelectorAll('a[href]')) {
+                    const text = a.textContent.trim().toLowerCase();
+                    if (text === 'quizzes'     && !result.quizzes)     result.quizzes     = a.href;
+                    if (text === 'assignments' && !result.assignments) result.assignments = a.href;
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) {
+                        const sub = walk(el.shadowRoot);
+                        if (!result.quizzes     && sub.quizzes)     result.quizzes     = sub.quizzes;
+                        if (!result.assignments && sub.assignments) result.assignments = sub.assignments;
+                    }
+                }
+                return result;
+            }
+            return walk(document);
+        }
+    """)
+
+    if not found.get("quizzes"):
+        try:
+            found["quizzes"] = resolve_quiz_url(course_url)
+        except ValueError:
+            pass
+    if not found.get("assignments"):
+        try:
+            found["assignments"] = resolve_assignment_url(course_url)
+        except ValueError:
+            pass
+
+    return found
+
+
 async def _find_menu_item(page: Page, text: str) -> dict | None:
     """Find a d2l-menu-item by its text attribute, walking shadow DOM. Returns {x, y}."""
     for _ in range(8):
