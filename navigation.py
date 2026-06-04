@@ -1,4 +1,38 @@
+import re
+from urllib.parse import urlparse, parse_qs
+
 from playwright.async_api import Page
+
+BS_BASE = "https://learn.okanagancollege.ca"
+
+
+def _extract_course_id(url: str) -> str:
+    """Extract Brightspace org-unit ID from any course URL."""
+    # ?ou=XXXXX or &ou=XXXXX
+    qs = parse_qs(urlparse(url).query)
+    if "ou" in qs:
+        return qs["ou"][0]
+    # /d2l/home/XXXXX
+    m = re.search(r"/d2l/home/(\d+)", url)
+    if m:
+        return m.group(1)
+    raise ValueError(f"Cannot extract course ID from URL: {url}")
+
+
+def resolve_quiz_url(url: str) -> str:
+    """Return the quiz list URL for any Brightspace course URL."""
+    if "quizzes_list" in url:
+        return url
+    ou = _extract_course_id(url)
+    return f"{BS_BASE}/d2l/lms/quizzing/user/quizzes_list.d2l?ou={ou}"
+
+
+def resolve_assignment_url(url: str) -> str:
+    """Return the assignment list URL for any Brightspace course URL."""
+    if "folders_list" in url:
+        return url
+    ou = _extract_course_id(url)
+    return f"{BS_BASE}/d2l/lms/dropbox/user/folders_list.d2l?ou={ou}"
 
 
 async def _find_menu_item(page: Page, text: str) -> dict | None:
