@@ -12,7 +12,7 @@ import customtkinter as ctk
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-VERSION = "v0.6.0"
+VERSION = "v0.6.1"
 
 _HERE       = Path(__file__).parent
 from config import COURSES_FILE
