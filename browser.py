@@ -140,20 +140,12 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
 
         await _wait_for_login(page, context)
 
-        for raw_url in urls:
+        for course_url in urls:
             print(f"\n{'─' * 50}")
-            print(f"Course: {raw_url}")
-
-            print("  Discovering quiz URL from course page...")
-            found = await discover_course_urls(page, raw_url)
-            quiz_url = found.get("quizzes")
-            if not quiz_url:
-                print("✗ Could not find Quizzes link on this course page.")
-                continue
-            print(f"  Quiz list: {quiz_url}")
+            print(f"Course: {course_url}")
 
             try:
-                await page.goto(quiz_url, wait_until="commit")
+                await page.goto(course_url, wait_until="commit")
             except Exception:
                 pass
             await page.wait_for_url("**/quizzing/**", timeout=60000)
@@ -179,7 +171,7 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
             for i, name in enumerate(names, start_from):
                 print(f"\n[{i}/{total}]  [{name}]")
                 try:
-                    await page.goto(quiz_url, wait_until="commit")
+                    await page.goto(course_url, wait_until="commit")
                 except Exception:
                     pass
                 await page.wait_for_selector(

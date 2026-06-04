@@ -1,0 +1,83 @@
+name: Release
+on:
+  push:
+    branches: [main, dev]
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract version
+        id: extract
+        run: |
+          VERSION=$(python -c "import re; print(re.search(r'VERSION\s*=\s*\"(.*?)\"', open('gui.py').read()).group(1))")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  build-windows:
+    needs: get-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Python Installer
+        run: Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe" -OutFile "installer\windows\python-3.12.10-amd64.exe"
+          
+      - name: Install Inno Setup
+        run: choco install innosetup
+          
+      - name: Compile Inno Setup
+        run: |
+          iscc /DMyAppVersion=${{ needs.get-version.outputs.version }} installer\windows\brightspace_automator.iss
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrightspaceAutomator-Setup
+          path: installer\windows\Output\BrightspaceAutomator-Setup.exe
+
+  build-mac:
+    needs: get-version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Create DMG
+        run: bash installer/mac/create-dmg.sh
+        
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrightspaceAutomator-Mac
+          path: dist/*.dmg
+
+  release:
+    needs: [get-version, build-windows, build-mac]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: BrightspaceAutomator-Setup
+          path: dist-win
+
+      - name: Download Mac Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: BrightspaceAutomator-Mac
+          path: dist-mac
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.get-version.outputs.version }}-${{ github.run_number }}
+          files: |
+            dist-win/BrightspaceAutomator-Setup.exe
+            dist-mac/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
