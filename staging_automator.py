@@ -210,7 +210,8 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
 
         print(f"  Popup URL: {popup.url}")
         print(f"  Typing source course: {source_course!r}")
-        await popup.frame_locator("iframe").locator("#z_b").fill(source_course)
+        body_frame = popup.frame(name="Body")
+        await body_frame.locator("#z_b").fill(source_course)
 
         print(f"\n{'─' * 50}")
         print("✓ Step 2 — search field filled. Ready for next step.")
