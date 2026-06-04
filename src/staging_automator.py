@@ -14,7 +14,7 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
 
 from playwright.async_api import async_playwright
-from browser import SESSION_FILE, _wait_for_login
+from browser import SESSION_FILE, _wait_for_login, run as browser_run, run_assignments as browser_run_assignments
 from staging_scraper import extract_crn, find_staging_shell
 
 _HERE   = Path(__file__).parent.parent
@@ -291,10 +291,73 @@ async def run_step2(course_input: str, source_course: str = "", dry_run: bool = 
         await browser.close()
 
 
+async def run_step2_gradebook(course_input: str, dry_run: bool = False, pause_fn=None, ask_fn=None):
+    """
+    Step 2b: Run quiz + assignment automator on the staged course to link everything to gradebook.
+    course_input: CRN or full code for the staging shell.
+    """
+    crn = extract_crn(course_input) if "." in course_input else course_input.strip()
+    if not crn:
+        print(f"✗ Could not extract CRN from {course_input!r}")
+        return
+
+    print(f"CRN: {crn}")
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        context = await browser.new_context(
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+        )
+        page = await context.new_page()
+
+        await _wait_for_login(page, context)
+
+        href = await find_staging_shell(page, crn)
+        if not href:
+            print(f"✗ No staging shell found for CRN {crn}")
+            await browser.close()
+            return
+
+        ou = _extract_ou(href)
+        if not ou:
+            print(f"✗ Could not extract OU from href {href!r}")
+            await browser.close()
+            return
+
+        print(f"  OU: {ou}")
+        await browser.close()
+
+    quiz_url = f"{BS_BASE}/d2l/lms/quizzing/admin/quizzes_manage.d2l?ou={ou}"
+    assign_url = f"{BS_BASE}/d2l/lms/dropbox/user/folders_list.d2l?ou={ou}"
+
+    print(f"\n{'─' * 50}")
+    print("Step 2b — Quizzes (gradebook + auto-submit)...")
+    await browser_run(
+        [quiz_url],
+        dry_run=dry_run,
+        settings={"set_in_gradebook": True, "set_auto_submit": True},
+        pause_fn=pause_fn,
+        ask_fn=ask_fn,
+    )
+
+    print(f"\n{'─' * 50}")
+    print("Step 2b — Assignments (gradebook)...")
+    await browser_run_assignments(
+        [assign_url],
+        dry_run=dry_run,
+        settings={"set_in_gradebook": True},
+        pause_fn=pause_fn,
+        ask_fn=ask_fn,
+    )
+
+    print(f"\n{'─' * 50}")
+    print("✓ Step 2b complete — quizzes and assignments linked to gradebook.")
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Staging automator")
-    parser.add_argument("step", choices=["1", "2"], help="Step to run")
+    parser.add_argument("step", choices=["1", "2", "2g"], help="Step to run (2g = gradebook)")
     parser.add_argument("crn", help="CRN or full course code for the staging shell")
     parser.add_argument("--source", help="Source course code (Step 2 only)")
     parser.add_argument("--dry-run", action="store_true")
@@ -303,3 +366,5 @@ if __name__ == "__main__":
         asyncio.run(run_step1(args.crn, dry_run=args.dry_run))
     elif args.step == "2":
         asyncio.run(run_step2(args.crn, args.source or "", dry_run=args.dry_run))
+    elif args.step == "2g":
+        asyncio.run(run_step2_gradebook(args.crn, dry_run=args.dry_run))
