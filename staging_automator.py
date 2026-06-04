@@ -245,8 +245,23 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
         if not selected:
             print("  ⚠ No matching row found — check the popup manually")
 
+        # Click Add Selected button (in Footer frame)
+        print("  Clicking Add Selected...")
+        add_frame = None
+        for frame in popup.frames:
+            try:
+                await frame.wait_for_selector("button:has-text('Add Selected')", timeout=2000)
+                add_frame = frame
+                break
+            except Exception:
+                continue
+        if add_frame is None:
+            raise Exception("Could not find 'Add Selected' button in any popup frame")
+        await add_frame.locator("button:has-text('Add Selected')").first.click()
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+
         print(f"\n{'─' * 50}")
-        print("✓ Step 2 — result selected. Ready for next step.")
+        print("✓ Step 2 — offering selected. Ready for next step.")
         input("  Press Enter to close...")
         await browser.close()
 
