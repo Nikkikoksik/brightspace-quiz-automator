@@ -1,4 +1,5 @@
 @echo off
+if "%~1"=="" start /min "" "%~f0" skip & exit /b
 cd /d "%~dp0"
 set PY=%~dp0python\python.exe
 set PYW=%~dp0python\pythonw.exe
