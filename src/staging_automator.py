@@ -155,11 +155,11 @@ async def run_step1(course_input: str, dry_run: bool = False):
         await browser.close()
 
 
-async def run_step2(course_input: str, source_course: str, dry_run: bool = False):
+async def run_step2(course_input: str, source_course: str = "", dry_run: bool = False):
     """
     Step 2: Open Course Admin → Import/Export/Copy Components → Search for offering.
     course_input: CRN or full code for the staging shell.
-    source_course: course code to search for in the offering popup (e.g. 'ASTF-104-002-31210.202530').
+    source_course: optional override. If not provided, opens platform tools so user can pick manually.
     """
     crn = extract_crn(course_input) if "." in course_input else course_input.strip()
     if not crn:
@@ -190,6 +190,20 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
             return
 
         print(f"  OU: {ou}")
+
+        # If no source course provided, open platform tools so user can pick
+        if not source_course:
+            print(f"\n  Opening course list for CRN {crn}...")
+            await page.goto(f"{BS_BASE}/d2l/platformTools/courses/6606?coursesTab=1", wait_until="domcontentloaded")
+            await page.wait_for_load_state("networkidle", timeout=20000)
+            search = page.locator("input[aria-label='Search Courses']")
+            await search.fill(crn)
+            await search.press("Enter")
+            await page.wait_for_timeout(2000)
+            print("  ─" * 25)
+            print("  Look through the courses in the browser.")
+            print("  Find the source course (not _Staged, not _Ready).")
+            source_course = input("  Type the offering code of the source course: ").strip()
 
         # Course Admin
         print("  Navigating to Course Admin...")
@@ -289,6 +303,4 @@ if __name__ == "__main__":
     if args.step == "1":
         asyncio.run(run_step1(args.crn, dry_run=args.dry_run))
     elif args.step == "2":
-        if not args.source:
-            parser.error("--source is required for step 2")
-        asyncio.run(run_step2(args.crn, args.source, dry_run=args.dry_run))
+        asyncio.run(run_step2(args.crn, args.source or "", dry_run=args.dry_run))
