@@ -214,7 +214,7 @@ async def find_staging_shell(page, crn: str) -> str | None:
     staged_href = None
     for link in links:
         text = (await link.inner_text()).strip()
-        if "_Staged" in text:
+        if "_Staged" in text and "_Ready" not in text:
             staged_href = await link.get_attribute("href")
             print(f"  ✓ Found: {text[:80]}")
             break
