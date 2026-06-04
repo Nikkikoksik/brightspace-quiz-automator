@@ -22,6 +22,9 @@ async def _wait_for_login(page, context):
         await page.wait_for_timeout(3000)
         url = page.url
         if "learn.okanagancollege.ca" in url and "microsoftonline.com" not in url:
+            has_login_form = await page.evaluate("() => !!document.querySelector('#userName')")
+            if has_login_form:
+                continue
             try:
                 await page.goto("https://learn.okanagancollege.ca/d2l/home", timeout=15000)
                 await page.wait_for_load_state("domcontentloaded", timeout=10000)
