@@ -206,6 +206,7 @@ async def find_staging_shell(page, crn: str) -> str | None:
 
     await page.mouse.click(inp["x"], inp["y"])
     await page.wait_for_timeout(300)
+    await page.keyboard.press("Control+a")
     await page.keyboard.type(crn)
     await page.wait_for_timeout(2000)   # wait for results
 
