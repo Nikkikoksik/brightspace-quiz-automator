@@ -12,6 +12,8 @@ import customtkinter as ctk
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+VERSION = "v0.6.0"
+
 _HERE       = Path(__file__).parent
 from config import COURSES_FILE
 OUTLINE_CFG = str(_HERE / "outline_config.json")
@@ -127,7 +129,7 @@ class App(ctk.CTk):
             row=6, column=0, sticky="sew", padx=16, pady=(0, 4),
         )
         settings_btn = ctk.CTkButton(
-            sidebar, text="  Settings", anchor="w", height=40,
+            sidebar, text=f"  Settings  {VERSION}", anchor="w", height=40,
             fg_color="transparent", hover_color=_NAV_HOVER,
             text_color="#aaaacc", font=ctk.CTkFont(size=13),
             corner_radius=6,
