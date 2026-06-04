@@ -40,6 +40,18 @@ async def _wait_for_login(page, context):
     print("✓ Session saved")
 
 
+async def run_bs_login():
+    """Standalone: open Brightspace, wait for login, save session. Used by Settings panel."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        context = await browser.new_context(
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None
+        )
+        page = await context.new_page()
+        await _wait_for_login(page, context)
+        await browser.close()
+
+
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
