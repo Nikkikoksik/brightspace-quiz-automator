@@ -242,14 +242,13 @@ async def run_step2(course_input: str, source_course: str = "", dry_run: bool = 
         await body_frame.wait_for_load_state("domcontentloaded", timeout=15000)
         await body_frame.wait_for_timeout(1000)
 
-        # Select matching result radio button (row whose offering code contains the CRN)
+        # Select matching result radio button (match by full source course name)
         print("  Selecting matching result...")
-        crn = extract_crn(source_course) if "." in source_course else source_course.strip()
         rows = await body_frame.locator("tr").all()
         selected = False
         for row in rows:
             text = await row.inner_text()
-            if crn in text:
+            if source_course in text:
                 radio = row.locator("input[type='radio']")
                 if await radio.count() > 0:
                     await radio.first.click()
