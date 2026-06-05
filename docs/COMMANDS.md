@@ -1,142 +1,83 @@
-# Useful Commands
-
-## Running the App
-
-```powershell
-# Launch the GUI (normal use)
-.\run.bat
-
-# Or directly
-py gui.py
-```
+# Commands & How To Use The App
 
 ---
 
-## Git — Step 0: Make sure you're in the right folder
+## Running the App
+Double-click `run.bat` — done.
 
+---
+
+## Get Into the Right Folder First
+Always run this before any Git commands:
 ```powershell
 cd "c:\Users\300353682\OneDrive - Okanagan College\Desktop\Quiz automator\brightspace-quiz-automator"
 ```
-> If you're one level up in `Quiz automator`, git commands will fail or affect the wrong files.
 
 ---
 
-## Git — Step 0b: Check which branch you're on
-
+## Check You're on the Right Branch
 ```powershell
 git branch
 ```
-> The branch with `*` is your current one. You should always be on `nick` when making changes.
-> If you're not: `git checkout nick`
-
----
-
-## Git — Before Starting Work (run every session)
-
-```powershell
-git fetch
-```
-> Downloads latest changes from GitHub. Nothing changes locally yet — safe to run anytime.
-
-```powershell
-git checkout dev
-git pull
-```
-> Switches to `dev` and pulls your teammates' latest changes.
-
+You should see `* nick`. If not, run:
 ```powershell
 git checkout nick
-git pull origin nick --rebase
 ```
-> Switches back to your branch and pulls any changes you pushed from another machine.
-
-```powershell
-git rebase dev
-```
-> Replays your `nick` commits on top of the latest `dev`. Keeps you current without touching anyone else's branch.
-
-```powershell
-git push origin nick --force-with-lease
-```
-> Pushes your updated `nick` branch to GitHub. `--force-with-lease` is required after a rebase and is safe on your personal branch.
 
 ---
 
-## Git — After Making and Committing a Change
-
+## Start of Every Work Session
+Run this before doing anything — catches you up with what everyone else did:
 ```powershell
-git add <filename>
+git fetch
+git checkout dev
+git pull
+git checkout nick
+git rebase dev
+git push origin nick --force-with-lease
+```
+
+---
+
+## After Making a Change — Save and Upload It
+```powershell
+git add filename.py
 git commit -m "describe what you changed"
-```
-> Stage and commit your change. Use specific filenames instead of `git add -A` to avoid accidentally committing unrelated files.
-
-```powershell
-git fetch
-git checkout dev
-git pull
-git checkout nick
-git rebase dev
 git push origin nick --force-with-lease
 ```
-> Sync with the latest `dev` then push your change to `nick`.
 
 ---
 
-## Git — Merging to Dev (only when change is confirmed working)
-
+## When a Change is Confirmed Working — Share With the Team
+Only do this when it actually works:
 ```powershell
 git checkout dev
 git merge nick
 git push origin dev
 git checkout nick
 ```
-> Only do this after confirming the feature works. Never commit directly to `dev`.
 
 ---
 
-## Git — See Recent Commits
-
+## Fix Login Problems
+Deletes saved login, forces a fresh login next run:
 ```powershell
-git log --oneline -10
+del session.json
+```
+For CourseBridge login:
+```powershell
+del cb_session.json
 ```
 
 ---
 
-## Installing / Updating Dependencies
-
+## Install Everything From Scratch
 ```powershell
-# Install everything needed
 py -m pip install playwright customtkinter pdf2docx
-
-# Install Playwright browsers (only needed once, or after reinstall)
 py -m playwright install chromium
 ```
 
 ---
 
-## Clearing Saved Sessions (force re-login)
-
-```powershell
-# Delete Brightspace session (will ask to log in again next run)
-del session.json
-
-# Delete CourseBridge session
-del cb_session.json
-
-# Delete both
-del session.json, cb_session.json
-```
-
----
-
-## Clearing Saved GUI Config (credentials / course URL)
-
-```powershell
-del outline_config.json
-```
-
----
-
 ## GitHub Repo
-
 https://github.com/Nikkikoksik/brightspace-quiz-automator
