@@ -411,7 +411,22 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_staging_step1,
         )
-        self._staging_step1_btn.pack(fill="x", pady=(0, 16))
+        self._staging_step1_btn.pack(fill="x", pady=(0, 8))
+
+        self._section_label(body, "SOURCE COURSE  (required for Steps 1+2)")
+        self._staging_source = ctk.CTkEntry(
+            body, placeholder_text="e.g. ASTF-104-002-31210.202530",
+            height=38,
+        )
+        self._staging_source.pack(fill="x", pady=(0, 8))
+
+        self._staging_steps12_btn = ctk.CTkButton(
+            body, text="▶   STEPS 1 + 2 — Hide Blueprint + Copy Components", height=52,
+            font=ctk.CTkFont(size=17, weight="bold"),
+            fg_color="#2a3a4a", hover_color="#3a5a6a",
+            command=self._start_staging_steps_1_2,
+        )
+        self._staging_steps12_btn.pack(fill="x", pady=(0, 16))
 
         self._section_label(body, "LOG")
         self._staging_log = ctk.CTkTextbox(
@@ -651,6 +666,7 @@ class App(ctk.CTk):
                         self._tfix_run_btn.configure(state="normal", text="▶   RUN TIMER FIX")
                     elif tag == "staging":
                         self._staging_step1_btn.configure(state="normal", text="▶   STEP 1 — Hide Blueprint Module")
+                        self._staging_steps12_btn.configure(state="normal", text="▶   STEPS 1 + 2 — Hide Blueprint + Copy Components")
                     else:
                         self._outline_run_btn.configure(state="normal", text="▶   RUN COURSE OUTLINE AUTOMATOR")
                 else:
@@ -1141,6 +1157,52 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 asyncio.run(run_step1(crn, dry_run=dry_run))
+            except Exception as e:
+                q.put(("staging", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("staging", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _start_staging_steps_1_2(self):
+        crn = self._staging_crn.get().strip()
+        source = self._staging_source.get().strip()
+        if not source:
+            self._append(self._staging_log, "⚠  Source course is required for Steps 1+2.")
+            return
+        if not crn:
+            queue_file = str(_HERE / "staging_queue.txt")
+            try:
+                with open(queue_file) as f:
+                    lines = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+                if not lines:
+                    self._append(self._staging_log, "⚠  Staging queue is empty. Refresh first or enter a CRN.")
+                    return
+                course_code = lines[0]
+                from staging_scraper import extract_crn
+                crn = extract_crn(course_code) or course_code
+                self._append(self._staging_log, f"Using queue: {course_code}  (CRN: {crn})")
+            except FileNotFoundError:
+                self._append(self._staging_log, "⚠  No staging queue found. Refresh first or enter a CRN.")
+                return
+
+        self._staging_steps12_btn.configure(state="disabled", text="Running…")
+        self._staging_log.configure(state="normal")
+        self._staging_log.delete("1.0", "end")
+        self._staging_log.configure(state="disabled")
+        dry_run = self._staging_dryrun.get()
+        q = self._log_queue
+
+        def worker():
+            from staging_automator import run_steps_1_2
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("staging", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                asyncio.run(run_steps_1_2(crn, source, dry_run=dry_run))
             except Exception as e:
                 q.put(("staging", f"✗  {e}"))
             finally:

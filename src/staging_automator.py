@@ -266,12 +266,126 @@ async def run_step2(course_input: str, source_course: str, dry_run: bool = False
         await browser.close()
 
 
+async def run_steps_1_2(course_input: str, source_course: str, dry_run: bool = False):
+    """
+    Steps 1 + 2 in a single browser session.
+    Finds the staging shell once, hides the blueprint module, then copies components.
+    """
+    crn = extract_crn(course_input) if "." in course_input else course_input.strip()
+    if not crn:
+        print(f"✗ Could not extract CRN from {course_input!r}")
+        return
+
+    print(f"CRN: {crn}")
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        context = await browser.new_context(
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+        )
+        page = await context.new_page()
+
+        await _wait_for_login(page, context)
+
+        href = await find_staging_shell(page, crn)
+        if not href:
+            print(f"✗ No staging shell found for CRN {crn}")
+            await browser.close()
+            return
+
+        ou = _extract_ou(href)
+        if not ou:
+            print(f"✗ Could not extract OU from href {href!r}")
+            await browser.close()
+            return
+
+        print(f"  OU: {ou}")
+
+        # --- Step 1 ---
+        content_url = f"{BS_BASE}/d2l/le/content/{ou}/Home"
+        print(f"\nStep 1 — Hide blueprint module")
+        print(f"  Navigating to Content: {content_url}")
+        await page.goto(content_url, wait_until="domcontentloaded")
+        await page.wait_for_load_state("networkidle", timeout=30000)
+        await hide_blueprint_module(page, dry_run=dry_run)
+        print("✓ Step 1 complete")
+
+        # --- Step 2 ---
+        print(f"\nStep 2 — Copy components from {source_course!r}")
+        print("  Navigating to Course Admin...")
+        await page.goto(f"{BS_BASE}/d2l/lp/cmc/main.d2l?ou={ou}", wait_until="domcontentloaded")
+        await page.wait_for_load_state("networkidle", timeout=20000)
+
+        print("  Clicking Import / Export / Copy Components...")
+        await page.locator(f"a[href*='import_export.d2l?ou={ou}']").first.click()
+        await page.wait_for_load_state("domcontentloaded", timeout=20000)
+
+        print("  Clicking Search for offering...")
+        async with page.expect_popup() as popup_info:
+            await page.locator("button#z_j").click()
+        popup = await popup_info.value
+        await popup.wait_for_load_state("networkidle", timeout=15000)
+
+        print(f"  Typing source course: {source_course!r}")
+        body_frame = None
+        for frame in popup.frames:
+            try:
+                await frame.wait_for_selector("#z_b", timeout=2000)
+                body_frame = frame
+                break
+            except Exception:
+                continue
+        if body_frame is None:
+            raise Exception("Could not find search input (#z_b) in any popup frame")
+        await body_frame.locator("#z_b").fill(source_course)
+
+        print("  Clicking Search...")
+        await body_frame.locator("input[value='Search'], button:has-text('Search')").first.click()
+        await body_frame.wait_for_load_state("domcontentloaded", timeout=15000)
+        await body_frame.wait_for_timeout(1000)
+
+        print("  Selecting matching result...")
+        source_crn = extract_crn(source_course) if "." in source_course else source_course.strip()
+        rows = await body_frame.locator("tr").all()
+        selected = False
+        for row in rows:
+            text = await row.inner_text()
+            if source_crn in text:
+                radio = row.locator("input[type='radio']")
+                if await radio.count() > 0:
+                    await radio.first.click()
+                    print(f"  ✓ Selected row: {text.strip()[:80]}")
+                    selected = True
+                    break
+        if not selected:
+            print("  ⚠ No matching row found — check the popup manually")
+
+        print("  Clicking Add Selected...")
+        add_frame = None
+        for frame in popup.frames:
+            try:
+                await frame.wait_for_selector("button:has-text('Add Selected')", timeout=2000)
+                add_frame = frame
+                break
+            except Exception:
+                continue
+        if add_frame is None:
+            raise Exception("Could not find 'Add Selected' button in any popup frame")
+        await add_frame.locator("button:has-text('Add Selected')").first.click()
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+
+        print(f"\n{'─' * 50}")
+        print("✓ Steps 1 + 2 complete")
+        input("  Press Enter to close...")
+        await browser.close()
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Staging automator")
-    parser.add_argument("step", choices=["1", "2"], help="Step to run")
+    parser.add_argument("step", choices=["1", "2", "1+2"], help="Step to run")
     parser.add_argument("crn", help="CRN or full course code for the staging shell")
-    parser.add_argument("--source", help="Source course code (Step 2 only)")
+    parser.add_argument("--source", help="Source course code (Step 2 and 1+2 only)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.step == "1":
@@ -280,3 +394,7 @@ if __name__ == "__main__":
         if not args.source:
             parser.error("--source is required for step 2")
         asyncio.run(run_step2(args.crn, args.source, dry_run=args.dry_run))
+    elif args.step == "1+2":
+        if not args.source:
+            parser.error("--source is required for step 1+2")
+        asyncio.run(run_steps_1_2(args.crn, args.source, dry_run=args.dry_run))
