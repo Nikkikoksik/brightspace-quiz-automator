@@ -563,7 +563,7 @@ class App(ctk.CTk):
     def _add_url_row(self, url=""):
         row = ctk.CTkFrame(self._urls_container, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=5)
-        entry = ctk.CTkEntry(row, placeholder_text="Please paste course page URL here…", height=38)
+        entry = ctk.CTkEntry(row, placeholder_text="Paste course page URL here…", height=38)
         entry.pack(side="left", fill="x", expand=True)
         if url:
             entry.insert(0, url)
@@ -578,7 +578,7 @@ class App(ctk.CTk):
     def _add_assign_url_row(self, url=""):
         row = ctk.CTkFrame(self._assign_urls_container, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=5)
-        entry = ctk.CTkEntry(row, placeholder_text="Please paste course page URL here…", height=38)
+        entry = ctk.CTkEntry(row, placeholder_text="Paste course page URL here…", height=38)
         entry.pack(side="left", fill="x", expand=True)
         if url:
             entry.insert(0, url)
@@ -593,7 +593,7 @@ class App(ctk.CTk):
     def _add_tfix_url_row(self, url=""):
         row = ctk.CTkFrame(self._tfix_urls_container, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=5)
-        entry = ctk.CTkEntry(row, placeholder_text="Please paste course page URL here…", height=38)
+        entry = ctk.CTkEntry(row, placeholder_text="Paste quiz page URL here…", height=38)
         entry.pack(side="left", fill="x", expand=True)
         if url:
             entry.insert(0, url)
