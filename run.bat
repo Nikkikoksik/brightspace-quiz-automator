@@ -43,7 +43,7 @@ if not exist ".playwright_installed" (
 )
 
 :: Check for updates
-%PY% auto_update.py
+%PY% src\auto_update.py
 
 :: Launch
 %PY% dev.py

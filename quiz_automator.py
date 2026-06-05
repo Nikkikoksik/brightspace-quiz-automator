@@ -12,6 +12,9 @@ Usage:
 
 import asyncio
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")

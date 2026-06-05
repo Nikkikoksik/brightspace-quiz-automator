@@ -44,7 +44,7 @@ if [ ! -f ".playwright_installed" ]; then
 fi
 
 # Check for updates
-python auto_update.py
+python src/auto_update.py
 
 # Launch
 python gui.py

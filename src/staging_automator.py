@@ -17,7 +17,7 @@ from playwright.async_api import async_playwright
 from browser import SESSION_FILE, _wait_for_login
 from staging_scraper import extract_crn, find_staging_shell
 
-_HERE   = Path(__file__).parent
+_HERE   = Path(__file__).parent.parent
 BS_BASE = "https://learn.okanagancollege.ca"
 
 

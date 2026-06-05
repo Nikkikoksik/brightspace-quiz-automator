@@ -14,7 +14,7 @@ from pathlib import Path
 REPO     = "Nikkikoksik/brightspace-quiz-automator"
 API_URL  = f"https://api.github.com/repos/{REPO}/commits/main"
 ZIP_URL  = f"https://github.com/{REPO}/archive/refs/heads/main.zip"
-HERE     = Path(__file__).parent
+HERE     = Path(__file__).parent.parent
 VERSION  = HERE / ".version"
 
 # Files that should never be overwritten by an update
@@ -22,6 +22,14 @@ PROTECTED = {
     "session.json", "cb_session.json", "bs_session.json",
     "outline_config.json", "courses.txt", ".version",
     ".playwright_installed", "coursebridge_preview.html",
+}
+
+# Library modules that live in src/ — route them there even if the GitHub ZIP
+# still ships them at the repo root (handles transition from flat → src/ layout).
+SRC_FILES = {
+    "actions.py", "auto_update.py", "browser.py", "config.py",
+    "course_outline_automator.py", "navigation.py",
+    "staging_automator.py", "staging_scraper.py",
 }
 
 
@@ -71,7 +79,11 @@ def download_and_extract(sha: str):
         rel = item.relative_to(src)
         if rel.parts[0] in PROTECTED or rel.name in PROTECTED:
             continue
-        dest = HERE / rel
+        # Route flat-ZIP library files into src/ regardless of where they sit in the ZIP
+        if item.is_file() and len(rel.parts) == 1 and rel.name in SRC_FILES:
+            dest = HERE / "src" / rel.name
+        else:
+            dest = HERE / rel
         if item.is_dir():
             dest.mkdir(parents=True, exist_ok=True)
         else:

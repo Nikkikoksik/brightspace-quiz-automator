@@ -32,7 +32,7 @@ OUTLINE_SEARCH_TERMS  = ["outline"]
 SYLLABUS_TOPIC_NAME   = "Course Syllabus"
 COURSE_URL            = ""
 
-_HERE           = Path(__file__).parent
+_HERE           = Path(__file__).parent.parent
 BS_SESSION_FILE = str(_HERE / "session.json")
 CB_SESSION_FILE = str(_HERE / "cb_session.json")
 

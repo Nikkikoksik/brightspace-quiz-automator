@@ -17,7 +17,7 @@ if sys.platform == "win32":
 
 from playwright.async_api import async_playwright
 
-_HERE           = Path(__file__).parent
+_HERE           = Path(__file__).parent.parent
 CB_SESSION_FILE = str(_HERE / "cb_session.json")
 CONFIG_FILE     = str(_HERE / "outline_config.json")
 QUEUE_FILE      = str(_HERE / "staging_queue.txt")

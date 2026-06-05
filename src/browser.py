@@ -6,7 +6,7 @@ from playwright.async_api import async_playwright
 from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls
 from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment
 
-SESSION_FILE = str(Path(__file__).parent / "session.json")
+SESSION_FILE = str(Path(__file__).parent.parent / "session.json")
 
 
 async def _wait_for_login(page, context):

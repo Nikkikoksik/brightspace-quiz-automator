@@ -19,5 +19,5 @@ if [ ! -d "$HERE/.venv" ]; then
 fi
 
 source "$HERE/.venv/bin/activate"
-python "$HERE/auto_update.py"
+python "$HERE/src/auto_update.py"
 python "$HERE/gui.py"

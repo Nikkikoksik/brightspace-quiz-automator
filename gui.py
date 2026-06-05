@@ -7,6 +7,8 @@ import threading
 from pathlib import Path
 from tkinter import messagebox
 
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
 import customtkinter as ctk
 
 ctk.set_appearance_mode("dark")

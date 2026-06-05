@@ -12,8 +12,12 @@ OutputBaseFilename=BrightspaceAutomator-Setup
 OutputDir=Output
 
 [Files]
-; App source files (all .py to app root)
-Source: "..\..\*.py"; DestDir: "{app}"; Flags: ignoreversion
+; Entry-point scripts at app root
+Source: "..\..\gui.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\quiz_automator.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\dev.py"; DestDir: "{app}"; Flags: ignoreversion
+; Library modules under src\
+Source: "..\..\src\*.py"; DestDir: "{app}\src"; Flags: ignoreversion
 Source: "..\..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; Production launcher at app root
 Source: "launch.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -40,6 +44,8 @@ Name: "{group}\Uninstall"; Filename: "{uninstallexe}"
 [UninstallDelete]
 ; Only remove code files — preserve all user data
 Type: files; Name: "{app}\*.py"
+Type: files; Name: "{app}\src\*.py"
+Type: dirifempty; Name: "{app}\src"
 Type: files; Name: "{app}\launch.bat"
 Type: files; Name: "{app}\requirements.txt"
 Type: files; Name: "{app}\icon.ico"
