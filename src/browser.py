@@ -285,17 +285,20 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 await page.goto(asgn_url, wait_until="commit")
             except Exception:
                 pass
-            await page.wait_for_selector(
-                "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
-            )
+            try:
+                await page.wait_for_selector(
+                    "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=8000
+                )
+            except Exception:
+                print("  Course has no assignments — skipping.")
+                continue
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
 
             names = await get_assignment_names(page)
-            print(f"  Found names: {names}")
             if not names:
-                print("✗ No assignments found.")
+                print("  Course has no assignments — skipping.")
                 continue
 
             total = len(names)
