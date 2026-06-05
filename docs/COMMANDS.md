@@ -54,6 +54,7 @@ git switch dev
 git merge nick --no-edit
 git push origin dev
 git switch nick
+git push origin nick
 ```
 > The `--no-edit` flag stops vim from opening during the merge — always include it.
 

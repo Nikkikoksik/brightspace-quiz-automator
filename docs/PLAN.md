@@ -12,7 +12,8 @@ Building a pipeline that fully stages a course from scratch using a CRN.
 | Step 2 | Copy all components from source course | Done ✅ |
 | Step 3 | Run quiz + assignment automator to link gradebook | Done ✅ |
 | Step 4 | Course outline — download, convert, paste into Brightspace | Not started ❌ |
-| Step 5 | Re-label shell from `_Staged` → `_Ready` | Not started ❌ |
+| Step 5 | Set Up Gradebook - Has to be done manually for now | Not started ❌ |
+| Step 6 | Re-label shell from `_Staged` → `_Ready` | Not started ❌ |
 
 **Test Step 2g first:**
 ```

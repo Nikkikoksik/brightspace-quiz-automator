@@ -98,10 +98,11 @@ async def scrape() -> list[str]:
         await staging_tab.click()
         await page.wait_for_timeout(1500)
 
-        # Click Ready to Send sub-tab
-        print("Clicking Ready to Send...")
+        # Click staging sub-tab (was "Ready to Send", renamed to "Staging in Process")
+        print("Clicking staging sub-tab...")
         ready_tab = page.locator(
-            "button[id*='trigger-ready_to_send'], button:has-text('Ready to Send')"
+            "button[id*='trigger-staging_in_progress'], button[id*='trigger-ready_to_send'], "
+            "button:has-text('Staging in Process'), button:has-text('Ready to Send')"
         ).first
         await ready_tab.click()
         await page.wait_for_timeout(2000)
@@ -205,16 +206,25 @@ async def find_staging_shell(page, crn: str) -> str | None:
         return None
 
     await page.mouse.click(inp["x"], inp["y"])
-    await page.wait_for_timeout(300)
-    await page.keyboard.type(crn)
-    await page.wait_for_timeout(2000)   # wait for results
+    await page.wait_for_timeout(400)
+    await page.keyboard.press("Control+a")
+    await page.keyboard.type(crn, delay=80)
+    await page.keyboard.press("Enter")
+    await page.wait_for_timeout(3000)        # wait for filtered results
 
     # Results are plain <a> tags in light DOM — find the _Staged one
     links = await page.locator("a.d2l-datalist-item-actioncontrol").all()
+    if not links:
+        print(f"  ⚠ Search returned no results at all for CRN {crn}")
+    else:
+        print(f"  Search returned {len(links)} result(s):")
+        for link in links:
+            print(f"    · {(await link.inner_text()).strip()[:80]}")
+
     staged_href = None
     for link in links:
         text = (await link.inner_text()).strip()
-        if "_Staged" in text:
+        if "_Staged" in text and crn in text:
             staged_href = await link.get_attribute("href")
             print(f"  ✓ Found: {text[:80]}")
             break
