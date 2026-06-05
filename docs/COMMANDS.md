@@ -34,14 +34,14 @@ git branch
 ## Git — Before Starting Work (run every session)
 
 ```powershell
-git fetch
-git switch dev
-git pull
-git switch nick
-git rebase dev
-git push origin nick --force-with-lease
+git fetch                               # download latest changes from GitHub (doesn't touch your files yet)
+git switch dev                          # move to the dev branch
+git pull                                # apply those downloaded changes to your local dev
+git switch nick                         # move back to your working branch
+git rebase dev                          # bring your changes up to date with dev
+git push origin nick --force-with-lease # push your rebased nick to GitHub (--force-with-lease is safe here)
 ```
-> Syncs your local nick with the latest dev. Always do this at the start of a session.
+> Run this at the start of every session so nick is in sync with dev before you start working.
 
 ---
 
@@ -50,6 +50,7 @@ git push origin nick --force-with-lease
 ```powershell
 git add .
 git commit -m "describe what you changed"
+git push origin nick
 git switch dev
 git merge nick --no-edit
 git push origin dev

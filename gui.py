@@ -22,8 +22,17 @@ OUTLINE_CFG      = str(_HERE / "outline_config.json")
 NOTES_FILE       = str(_HERE / "notes.txt")
 STAGING_DONE_FILE = str(_HERE / "staging_done.json")
 
-_SIDEBAR_BG = "#1a1a2e"
-_NAV_HOVER  = "#252540"
+_SIDEBAR_BG    = "#141414"
+_NAV_HOVER     = "#222222"
+_BTN_PRIMARY   = "#0e4d4d"
+_BTN_PRIMARY_H = "#166060"
+_BTN_MUTED     = "#252525"
+_BTN_MUTED_H   = "#343434"
+_BTN_DANGER    = "#4a1a1a"
+_BTN_DANGER_H  = "#631f1f"
+_BTN_ADD       = "#1a3d1a"
+_BTN_ADD_H     = "#245224"
+_DIVIDER       = "#2a2a2a"
 _NAV_ACTIVE = "#2e2e52"
 
 
@@ -87,7 +96,7 @@ class App(ctk.CTk):
         if subtitle:
             ctk.CTkLabel(hdr, text=subtitle,
                          font=ctk.CTkFont(size=12), text_color="#7777aa").pack(anchor="w", pady=(3, 0))
-        ctk.CTkFrame(parent, height=1, fg_color="#2e2e50").pack(fill="x", padx=28, pady=(14, 0))
+        ctk.CTkFrame(parent, height=1, fg_color=_DIVIDER).pack(fill="x", padx=28, pady=(14, 0))
         body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=24, pady=(8, 12))
         return body
@@ -99,12 +108,12 @@ class App(ctk.CTk):
 
     def _log_box(self, parent, height: int) -> ctk.CTkTextbox:
         """Styled log output area with a subtle border."""
-        border = ctk.CTkFrame(parent, fg_color="#1a1a2e", corner_radius=8)
+        border = ctk.CTkFrame(parent, fg_color="#1c1c1c", corner_radius=8)
         border.pack(fill="x", pady=(10, 0))
         box = ctk.CTkTextbox(
             border, height=height, state="disabled",
             font=ctk.CTkFont(family="Courier New", size=12),
-            fg_color="#111122", corner_radius=6,
+            fg_color="#111111", corner_radius=6,
             border_width=0,
         )
         box.pack(fill="x", padx=2, pady=2)
@@ -147,7 +156,7 @@ class App(ctk.CTk):
             btn.grid(row=r, column=0, sticky="ew", padx=8, pady=2)
             self._nav_btns[key] = btn
 
-        ctk.CTkFrame(sidebar, height=1, fg_color="#2a2a45").grid(
+        ctk.CTkFrame(sidebar, height=1, fg_color=_DIVIDER).grid(
             row=6, column=0, sticky="ew", padx=16, pady=(8, 0),
         )
         ctk.CTkLabel(
@@ -166,7 +175,7 @@ class App(ctk.CTk):
             self._nav_btns[key] = btn
 
         sidebar.grid_rowconfigure(10, weight=1)
-        ctk.CTkFrame(sidebar, height=1, fg_color="#2a2a45").grid(
+        ctk.CTkFrame(sidebar, height=1, fg_color=_DIVIDER).grid(
             row=11, column=0, sticky="sew", padx=16, pady=(0, 4),
         )
         settings_btn = ctk.CTkButton(
@@ -248,7 +257,7 @@ class App(ctk.CTk):
                         text_color="#f0a500").pack(anchor="w", padx=16, pady=(4, 14))
 
         self._quiz_run_btn = ctk.CTkButton(
-            body, text="▶   RUN QUIZ AUTOMATOR", height=52,
+            body, text="▶  Run Quizzes", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_quiz_run,
         )
@@ -301,7 +310,7 @@ class App(ctk.CTk):
                         text_color="#f0a500").pack(anchor="w", padx=16, pady=(4, 14))
 
         self._assign_run_btn = ctk.CTkButton(
-            body, text="▶   RUN ASSIGNMENT AUTOMATOR", height=52,
+            body, text="▶  Run Assignments", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_assignment_run,
         )
@@ -342,7 +351,7 @@ class App(ctk.CTk):
                         text_color="#f0a500").pack(anchor="w", padx=16, pady=14)
 
         self._tfix_run_btn = ctk.CTkButton(
-            body, text="▶   RUN TIMER FIX", height=52,
+            body, text="▶  Run Timer Fix", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_timer_fix,
         )
@@ -374,7 +383,7 @@ class App(ctk.CTk):
         ).pack(anchor="w", padx=16, pady=14)
 
         self._outline_run_btn = ctk.CTkButton(
-            body, text="▶   RUN COURSE OUTLINE AUTOMATOR", height=52,
+            body, text="▶  Run Course Outline", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_outline_run,
         )
@@ -410,9 +419,9 @@ class App(ctk.CTk):
                         text_color="#f0a500").pack(anchor="w", pady=(0, 18))
 
         self._staging_steps12_btn = ctk.CTkButton(
-            body, text="▶   STEP 1 — Hide Blueprint + Copy Components", height=52,
+            body, text="▶  Stage Course", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
-            fg_color="#2a3a4a", hover_color="#3a5a6a",
+            fg_color=_BTN_PRIMARY, hover_color=_BTN_PRIMARY_H,
             command=self._start_staging_steps_1_2,
         )
         self._staging_steps12_btn.pack(fill="x", pady=(0, 16))
@@ -425,21 +434,82 @@ class App(ctk.CTk):
         body = self._panel_body(parent, "Staging Queue",
                                 "Track which courses have been staged")
 
-        # Refresh button
+        # ── Top row: refresh + status ──────────────────────────────────────────
+        top = ctk.CTkFrame(body, fg_color="transparent")
+        top.pack(fill="x", pady=(0, 10))
+        top.columnconfigure(0, weight=1)
+
         self._staging_refresh_btn = ctk.CTkButton(
-            body, text="⟳   REFRESH FROM COURSEBRIDGE", height=38,
-            fg_color="#2a2a4a", hover_color="#3a3a6a",
+            top, text="⟳  Refresh Queue", height=36,
+            fg_color=_BTN_MUTED, hover_color=_BTN_MUTED_H,
             command=self._start_staging_refresh,
         )
-        self._staging_refresh_btn.pack(fill="x", pady=(0, 14))
+        self._staging_refresh_btn.grid(row=0, column=0, sticky="ew", padx=(0, 8))
 
         self._queue_status_label = ctk.CTkLabel(
             body, text="", font=ctk.CTkFont(size=12), text_color="#7777aa",
         )
-        self._queue_status_label.pack(anchor="w", pady=(0, 8))
+        self._queue_status_label.pack(anchor="w", pady=(0, 6))
 
-        self._staging_queue_frame = ctk.CTkScrollableFrame(body)
-        self._staging_queue_frame.pack(fill="both", expand=True)
+        # ── Add course row ─────────────────────────────────────────────────────
+        add_row = ctk.CTkFrame(body, fg_color="transparent")
+        add_row.pack(fill="x", pady=(0, 10))
+        add_row.columnconfigure(0, weight=1)
+        self._queue_add_entry = ctk.CTkEntry(
+            add_row, placeholder_text="Add a course (e.g. MATH-100-001-31899.202530)…",
+            height=34,
+        )
+        self._queue_add_entry.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._queue_add_entry.bind("<Return>", lambda e: self._queue_add_course())
+        ctk.CTkButton(
+            add_row, text="+ Add", width=70, height=34,
+            fg_color=_BTN_ADD, hover_color=_BTN_ADD_H,
+            command=self._queue_add_course,
+        ).grid(row=0, column=1)
+
+        # ── Sub-tabs ───────────────────────────────────────────────────────────
+        tabs = ctk.CTkTabview(body, height=400)
+        tabs.pack(fill="both", expand=True)
+        tabs.add("To Do")
+        tabs.add("Done")
+
+        self._queue_todo_frame = ctk.CTkScrollableFrame(tabs.tab("To Do"), fg_color="transparent")
+        self._queue_todo_frame.pack(fill="both", expand=True)
+
+        self._queue_done_frame = ctk.CTkScrollableFrame(tabs.tab("Done"), fg_color="transparent")
+        self._queue_done_frame.pack(fill="both", expand=True)
+
+        self._load_staging_queue_list()
+
+    def _queue_add_course(self):
+        course = self._queue_add_entry.get().strip()
+        if not course:
+            return
+        queue_file = str(_HERE / "staging_queue.txt")
+        try:
+            with open(queue_file, encoding="utf-8") as f:
+                existing = [l.strip() for l in f if l.strip()]
+        except FileNotFoundError:
+            existing = []
+        if course not in existing:
+            existing.append(course)
+            with open(queue_file, "w", encoding="utf-8") as f:
+                f.write("\n".join(existing) + "\n")
+        self._queue_add_entry.delete(0, "end")
+        self._load_staging_queue_list()
+
+    def _queue_delete_course(self, course: str):
+        queue_file = str(_HERE / "staging_queue.txt")
+        try:
+            with open(queue_file, encoding="utf-8") as f:
+                lines = [l.strip() for l in f if l.strip() and l.strip() != course]
+        except FileNotFoundError:
+            lines = []
+        with open(queue_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+        done = self._done_set()
+        done.discard(course)
+        self._save_done_set(done)
         self._load_staging_queue_list()
 
     # ── Notes panel ───────────────────────────────────────────────────────────
@@ -456,7 +526,7 @@ class App(ctk.CTk):
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             btn_row, text="Clear", width=80, height=32,
-            fg_color="#4a2a2a", hover_color="#6a3a3a",
+            fg_color=_BTN_DANGER, hover_color=_BTN_DANGER_H,
             command=self._notes_clear,
         ).pack(side="left")
 
@@ -538,7 +608,7 @@ class App(ctk.CTk):
         self._bs_login_btn.pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             btn_row, text="Clear Session", width=120, height=36,
-            fg_color="#4a2a2a", hover_color="#6a3a3a",
+            fg_color=_BTN_DANGER, hover_color=_BTN_DANGER_H,
             command=self._clear_bs_session,
         ).pack(side="left")
 
@@ -710,32 +780,32 @@ class App(ctk.CTk):
                     self._append(self._staging_log, "📝  Note added — review and edit in the Notes tab")
                     continue
                 elif msg == "__QUIZ_DONE__":
-                    self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
+                    self._quiz_run_btn.configure(state="normal", text="▶  Run Quizzes")
                     self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
                     self._quiz_verify_btn.configure(state="normal", text="🔍   VERIFY SETTINGS  (read-only check, no changes)")
                     self._resume_event.set()
                     self.after(0, self._post_quiz_review)
                 elif msg == "__ASSIGN_DONE__":
-                    self._assign_run_btn.configure(state="normal", text="▶   RUN ASSIGNMENT AUTOMATOR")
+                    self._assign_run_btn.configure(state="normal", text="▶  Run Assignments")
                     self._assign_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
                     self._resume_event.set()
                     self.after(0, self._post_assign_review)
                 elif msg == "__DONE__":
                     if tag == "quiz":
-                        self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
+                        self._quiz_run_btn.configure(state="normal", text="▶  Run Quizzes")
                         self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
                         self._quiz_verify_btn.configure(state="normal", text="🔍   VERIFY SETTINGS  (read-only check, no changes)")
                         self._resume_event.set()
                     elif tag == "assign":
-                        self._assign_run_btn.configure(state="normal", text="▶   RUN ASSIGNMENT AUTOMATOR")
+                        self._assign_run_btn.configure(state="normal", text="▶  Run Assignments")
                         self._assign_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
                         self._resume_event.set()
                     elif tag == "tfix":
-                        self._tfix_run_btn.configure(state="normal", text="▶   RUN TIMER FIX")
+                        self._tfix_run_btn.configure(state="normal", text="▶  Run Timer Fix")
                     elif tag == "staging":
-                        self._staging_steps12_btn.configure(state="normal", text="▶   STEP 1 — Hide Blueprint + Copy Components")
+                        self._staging_steps12_btn.configure(state="normal", text="▶  Stage Course")
                     else:
-                        self._outline_run_btn.configure(state="normal", text="▶   RUN COURSE OUTLINE AUTOMATOR")
+                        self._outline_run_btn.configure(state="normal", text="▶  Run Course Outline")
                 else:
                     self._append(box, msg)
         except queue.Empty:
@@ -1216,7 +1286,7 @@ class App(ctk.CTk):
                 sys.stdout = old
                 self.after(0, lambda: (
                     self._staging_refresh_btn.configure(
-                        state="normal", text="⟳   REFRESH QUEUE FROM COURSEBRIDGE",
+                        state="normal", text="⟳  Refresh Queue",
                     ),
                     self._load_staging_queue_list(),
                 ))
@@ -1244,8 +1314,14 @@ class App(ctk.CTk):
         self._load_staging_queue_list()
 
     def _load_staging_queue_list(self):
-        for w in self._staging_queue_frame.winfo_children():
+        if not hasattr(self, "_queue_todo_frame"):
+            return
+
+        for w in self._queue_todo_frame.winfo_children():
             w.destroy()
+        for w in self._queue_done_frame.winfo_children():
+            w.destroy()
+
         queue_file = str(_HERE / "staging_queue.txt")
         try:
             with open(queue_file, encoding="utf-8") as f:
@@ -1253,59 +1329,62 @@ class App(ctk.CTk):
         except FileNotFoundError:
             courses = []
 
-        done = self._done_set()
-        pending   = [c for c in courses if c not in done]
+        done    = self._done_set()
+        pending = [c for c in courses if c not in done]
         completed = [c for c in courses if c in done]
 
         total = len(courses)
         ndone = len(completed)
         if hasattr(self, "_queue_status_label"):
-            if total:
-                self._queue_status_label.configure(
-                    text=f"{ndone} of {total} completed  ·  {total - ndone} remaining"
-                )
-            else:
-                self._queue_status_label.configure(text="No courses — click Refresh to load")
+            self._queue_status_label.configure(
+                text=f"{ndone} of {total} done  ·  {total - ndone} remaining" if total
+                else "No courses yet — click Refresh or add one above"
+            )
 
-        if not courses:
-            ctk.CTkLabel(
-                self._staging_queue_frame,
-                text="No courses yet — click Refresh to load from CourseBridge",
-                text_color="#666666", font=ctk.CTkFont(size=12),
-            ).pack(anchor="w", padx=8, pady=6)
-            return
+        def _make_row(parent, course, is_done):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", padx=4, pady=2)
+            row.columnconfigure(0, weight=1)
 
-        def _section_header(text):
-            ctk.CTkLabel(
-                self._staging_queue_frame, text=text,
-                font=ctk.CTkFont(size=10, weight="bold"),
-                text_color="#555577",
-            ).pack(anchor="w", padx=6, pady=(10, 3))
-
-        def _make_row(course, is_done):
-            hint = "✓  mark done" if not is_done else "↩  undo"
-            row = ctk.CTkButton(
-                self._staging_queue_frame,
-                text=f"  {course}",
-                height=32,
+            ctk.CTkButton(
+                row, text=f"  {course}",
+                height=30,
                 font=ctk.CTkFont(family="Courier New", size=12),
-                fg_color="#1c1c2e" if not is_done else "#141420",
+                fg_color="#1c1c2e" if not is_done else "#141a14",
                 hover_color="#22334a" if not is_done else "#1a2a1a",
-                text_color="#b0b8cc" if not is_done else "#445544",
+                text_color="#b0b8cc" if not is_done else "#4a7a4a",
                 anchor="w",
                 command=lambda c=course: self._toggle_course_done(c),
-            )
-            row.pack(fill="x", padx=4, pady=1)
+            ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+            ctk.CTkButton(
+                row, text="×", width=28, height=30,
+                font=ctk.CTkFont(size=14),
+                fg_color="transparent",
+                hover_color="#3a1a1a",
+                text_color="#554444",
+                command=lambda c=course: self._queue_delete_course(c),
+            ).grid(row=0, column=1)
 
         if pending:
-            _section_header(f"TO DO  —  {len(pending)} course{'s' if len(pending) != 1 else ''}")
             for course in pending:
-                _make_row(course, is_done=False)
+                _make_row(self._queue_todo_frame, course, is_done=False)
+        else:
+            ctk.CTkLabel(
+                self._queue_todo_frame,
+                text="Nothing left to do!" if courses else "No courses yet — click Refresh or add one above",
+                text_color="#555577", font=ctk.CTkFont(size=12),
+            ).pack(anchor="w", padx=8, pady=10)
 
         if completed:
-            _section_header(f"DONE  —  {len(completed)} course{'s' if len(completed) != 1 else ''}")
             for course in completed:
-                _make_row(course, is_done=True)
+                _make_row(self._queue_done_frame, course, is_done=True)
+        else:
+            ctk.CTkLabel(
+                self._queue_done_frame,
+                text="No completed courses yet.",
+                text_color="#555577", font=ctk.CTkFont(size=12),
+            ).pack(anchor="w", padx=8, pady=10)
 
     def _start_staging_step1(self):
         crn = self._staging_crn.get().strip()
