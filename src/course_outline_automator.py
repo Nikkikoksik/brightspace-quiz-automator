@@ -214,10 +214,17 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
     return dest
 
 
-async def _manual_download_fallback(page: Page, download_dir: Path, prompt_fn) -> Path:
-    """Wait for user to manually trigger a download in the browser."""
+async def _manual_download_fallback(page: Page, download_dir: Path, prompt_fn) -> Path | None:
+    """Wait for user to manually trigger a download, or return None if no outline exists."""
     print("  No matching file confirmed — waiting for manual download...")
-    prompt_fn("In the browser, find the course outline, click Download, then click OK here.")
+    answer = prompt_fn(
+        "Is there a course outline in this course?\n"
+        "If YES — find it in the browser, click Download, then click Yes.\n"
+        "If NO — click No to skip the course outline step. (y/n)"
+    )
+    if answer.strip().lower() not in ("y", "yes"):
+        print("  Skipping course outline — no outline present.")
+        return None
     try:
         dl = await page.context.wait_for_event("download", timeout=30000)
         raw_dest = download_dir / dl.suggested_filename
@@ -227,7 +234,7 @@ async def _manual_download_fallback(page: Page, download_dir: Path, prompt_fn) -
         os.startfile(str(dest))
         return dest
     except Exception:
-        raise RuntimeError("No download detected. Click Download in the browser before clicking OK.")
+        raise RuntimeError("No download detected. Click Download in the browser before clicking Yes.")
 
 
 async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=input) -> Path:
@@ -561,9 +568,11 @@ async def _resolve_course_id(page, course_url: str) -> str:
     return course_id
 
 
-async def _convert_outline(page, course_id: str, prompt_fn, email: str, password: str) -> str:
-    """Steps 1-3: download outline, convert if needed, run CourseBridge. Returns HTML."""
+async def _convert_outline(page, course_id: str, prompt_fn, email: str, password: str) -> str | None:
+    """Steps 1-3: download outline, convert if needed, run CourseBridge. Returns HTML or None if skipped."""
     file_path = await find_and_download_outline(page, course_id=course_id, prompt_fn=prompt_fn)
+    if file_path is None:
+        return None
     if file_path.suffix.lower() == ".pdf":
         print("\nStep 2 — PDF detected, converting...")
         file_path = convert_pdf_to_docx(file_path)
@@ -601,6 +610,10 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
             print("⚠  DRY RUN MODE — HTML will not be pasted into Brightspace")
 
         html = await _convert_outline(page, course_id, prompt_fn, _email, _password)
+        if html is None:
+            print("\n✓ Course outline step skipped — no outline present.")
+            await browser.close()
+            return
 
         preview_path = _HERE / "coursebridge_preview.html"
         preview_path.write_text(html, encoding="utf-8")
