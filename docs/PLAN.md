@@ -10,9 +10,9 @@ Building a pipeline that fully stages a course from scratch using a CRN.
 |---|---|---|
 | Step 1 | Find `_Staged` shell by CRN, hide blueprint module | Done ✅ |
 | Step 2 | Copy all components from source course | Done ✅ |
-| Step 2g | Run quiz + assignment automator to link gradebook | Written, needs testing ⚠️ |
-| Step 3 | Course outline — download, convert, paste into Brightspace | Not started ❌ |
-| Step 4 | Re-label shell from `_Staged` → `_Ready` | Not started ❌ |
+| Step 3 | Run quiz + assignment automator to link gradebook | Done ✅ |
+| Step 4 | Course outline — download, convert, paste into Brightspace | Not started ❌ |
+| Step 5 | Re-label shell from `_Staged` → `_Ready` | Not started ❌ |
 
 **Test Step 2g first:**
 ```

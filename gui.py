@@ -100,7 +100,7 @@ class App(ctk.CTk):
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
         sidebar.grid_columnconfigure(0, weight=1)
-        sidebar.grid_rowconfigure(8, weight=1)  # spacer pushes Settings to bottom
+        sidebar.grid_rowconfigure(9, weight=1)  # spacer pushes Settings to bottom
 
         ctk.CTkLabel(
             sidebar, text="Brightspace\nAutomator",
@@ -113,6 +113,7 @@ class App(ctk.CTk):
             ("Quiz Automator",       "  Quizzes"),
             ("Assignment Automator", "  Assignments"),
             ("Course Outline",       "  Course Outline"),
+            ("Notes",                "  Notes"),
         ]
         self._nav_btns = {}
         for r, (key, label) in enumerate(nav_items, start=1):
@@ -127,12 +128,12 @@ class App(ctk.CTk):
             self._nav_btns[key] = btn
 
         ctk.CTkFrame(sidebar, height=1, fg_color="#2a2a45").grid(
-            row=5, column=0, sticky="ew", padx=16, pady=(8, 0),
+            row=6, column=0, sticky="ew", padx=16, pady=(8, 0),
         )
         ctk.CTkLabel(
             sidebar, text="  OPTIONAL",
             font=ctk.CTkFont(size=10), text_color="#555577",
-        ).grid(row=6, column=0, sticky="w", padx=8, pady=(2, 0))
+        ).grid(row=7, column=0, sticky="w", padx=8, pady=(2, 0))
         timer_btn = ctk.CTkButton(
             sidebar, text="  Timer Fix", anchor="w", height=40,
             fg_color="transparent", hover_color=_NAV_HOVER,
@@ -140,11 +141,12 @@ class App(ctk.CTk):
             corner_radius=6,
             command=lambda: self._show_panel("Timer Fix"),
         )
-        timer_btn.grid(row=7, column=0, sticky="ew", padx=8, pady=2)
+        timer_btn.grid(row=8, column=0, sticky="ew", padx=8, pady=2)
         self._nav_btns["Timer Fix"] = timer_btn
 
+        sidebar.grid_rowconfigure(9, weight=1)
         ctk.CTkFrame(sidebar, height=1, fg_color="#2a2a45").grid(
-            row=9, column=0, sticky="sew", padx=16, pady=(0, 4),
+            row=10, column=0, sticky="sew", padx=16, pady=(0, 4),
         )
         settings_btn = ctk.CTkButton(
             sidebar, text=f"  Settings  {VERSION}", anchor="w", height=40,
@@ -153,7 +155,7 @@ class App(ctk.CTk):
             corner_radius=6,
             command=lambda: self._show_panel("Settings"),
         )
-        settings_btn.grid(row=10, column=0, sticky="ew", padx=8, pady=(0, 16))
+        settings_btn.grid(row=11, column=0, sticky="ew", padx=8, pady=(0, 16))
         self._nav_btns["Settings"] = settings_btn
 
         # Content area
@@ -169,6 +171,7 @@ class App(ctk.CTk):
             ("Timer Fix",            self._build_timer_fix_panel),
             ("Course Outline",       self._build_outline_panel),
             ("Staging",              self._build_staging_panel),
+            ("Notes",                self._build_notes_panel),
             ("Settings",             self._build_settings_panel),
         ]:
             panel = ctk.CTkFrame(content, corner_radius=0, fg_color="transparent")
@@ -406,15 +409,8 @@ class App(ctk.CTk):
         )
         self._staging_refresh_btn.pack(fill="x", pady=(0, 8))
 
-        self._staging_step1_btn = ctk.CTkButton(
-            body, text="▶   STEP 1 — Hide Blueprint Module", height=52,
-            font=ctk.CTkFont(size=17, weight="bold"),
-            command=self._start_staging_step1,
-        )
-        self._staging_step1_btn.pack(fill="x", pady=(0, 8))
-
         self._staging_steps12_btn = ctk.CTkButton(
-            body, text="▶   STEPS 1 + 2 — Hide Blueprint + Copy Components", height=52,
+            body, text="▶   STEP 1 — Hide Blueprint + Copy Components", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
             fg_color="#2a3a4a", hover_color="#3a5a6a",
             command=self._start_staging_steps_1_2,
@@ -427,6 +423,42 @@ class App(ctk.CTk):
             font=ctk.CTkFont(family="Courier New", size=12),
         )
         self._staging_log.pack(fill="x")
+
+    # ── Notes panel ───────────────────────────────────────────────────────────
+
+    def _build_notes_panel(self, parent):
+        body = self._panel_body(parent, "Course Notes",
+                                "Auto-populated from staging run. Editable.")
+
+        btn_row = ctk.CTkFrame(body, fg_color="transparent")
+        btn_row.pack(fill="x", pady=(0, 8))
+        ctk.CTkButton(
+            btn_row, text="Copy All", width=100, height=32,
+            command=self._notes_copy,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            btn_row, text="Clear", width=80, height=32,
+            fg_color="#4a2a2a", hover_color="#6a3a3a",
+            command=self._notes_clear,
+        ).pack(side="left")
+
+        self._notes_box = ctk.CTkTextbox(
+            body, font=ctk.CTkFont(family="Courier New", size=12),
+        )
+        self._notes_box.pack(fill="both", expand=True)
+
+    def _notes_copy(self):
+        text = self._notes_box.get("1.0", "end").strip()
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+
+    def _notes_clear(self):
+        self._notes_box.delete("1.0", "end")
+
+    def append_note(self, text: str):
+        """Append a note line to the Notes tab (called from worker threads via queue)."""
+        self._notes_box.insert("end", text + "\n")
 
     # ── Settings panel ────────────────────────────────────────────────────────
 
@@ -636,7 +668,10 @@ class App(ctk.CTk):
                     "staging": self._staging_log,
                 }.get(tag, self._outline_log)
 
-                if msg == "__QUIZ_DONE__":
+                if tag == "note":
+                    self.append_note(msg)
+                    continue
+                elif msg == "__QUIZ_DONE__":
                     self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
                     self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
                     self._resume_event.set()
@@ -658,8 +693,7 @@ class App(ctk.CTk):
                     elif tag == "tfix":
                         self._tfix_run_btn.configure(state="normal", text="▶   RUN TIMER FIX")
                     elif tag == "staging":
-                        self._staging_step1_btn.configure(state="normal", text="▶   STEP 1 — Hide Blueprint Module")
-                        self._staging_steps12_btn.configure(state="normal", text="▶   STEPS 1 + 2 — Hide Blueprint + Copy Components")
+                        self._staging_steps12_btn.configure(state="normal", text="▶   STEP 1 — Hide Blueprint + Copy Components")
                     else:
                         self._outline_run_btn.configure(state="normal", text="▶   RUN COURSE OUTLINE AUTOMATOR")
                 else:
@@ -1183,6 +1217,8 @@ class App(ctk.CTk):
         dry_run = self._staging_dryrun.get()
         q = self._log_queue
 
+        prompter = _GUIPrompter(self)
+
         def worker():
             from staging_automator import run_steps_1_2
             class W:
@@ -1191,7 +1227,7 @@ class App(ctk.CTk):
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
             try:
-                asyncio.run(run_steps_1_2(crn, dry_run=dry_run))
+                asyncio.run(run_steps_1_2(crn, dry_run=dry_run, prompt_fn=prompter, note_fn=lambda t: q.put(("note", t))))
             except Exception as e:
                 q.put(("staging", f"✗  {e}"))
             finally:

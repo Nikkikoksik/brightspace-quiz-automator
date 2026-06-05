@@ -202,20 +202,28 @@ async def run_step2(course_input: str, dry_run: bool = False):
         print("✋ Browser is ready.")
         print("   1. Click 'Search for offering' and find your source course")
         print("   2. Select it and click 'Add Selected'")
-        print("   3. Click 'Copy All Components'")
-        print("   4. Close the browser when done")
+        print("   3. Click 'Select Components'")
+        print("   4. Click 'Select All Components', then unselect 'Grades' and 'Grade Settings'")
+        print("   5. Click 'Continue'")
+        print("   6. Click 'Finish'")
+        print("   7. Close the browser when done")
         print("─" * 50)
 
         await page.wait_for_event("close", timeout=0)
         print("✓ Step 2 complete")
 
 
-async def run_steps_1_2(course_input: str, dry_run: bool = False):
+async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None, note_fn=None):
     """
     Steps 1 + 2 in a single browser session.
     Hides the blueprint module automatically, then leaves the browser open
     for the user to select the source course and click Copy Components.
+    After step 2, optionally continues through Quiz, Assignment, and Course Outline automators.
+    prompt_fn: callable(str) -> str  (defaults to built-in input)
+    note_fn:   callable(str)         (called when a note should be added to the Notes tab)
     """
+    _prompt = prompt_fn if prompt_fn else input
+    _note   = note_fn if note_fn else lambda t: print(f"[NOTE] {t}")
     crn = extract_crn(course_input) if "." in course_input else course_input.strip()
     if not crn:
         print(f"✗ Could not extract CRN from {course_input!r}")
@@ -269,12 +277,47 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False):
         print("✋ Browser is ready.")
         print("   1. Click 'Search for offering' and find your source course")
         print("   2. Select it and click 'Add Selected'")
-        print("   3. Click 'Copy All Components'")
-        print("   4. Close the browser when done")
+        print("   3. Click 'Select Components'")
+        print("   4. Click 'Select All Components', then unselect 'Grades' and 'Grade Settings'")
+        print("   5. Click 'Continue'")
+        print("   6. Click 'Finish'")
+        print("   7. Close the browser when done")
         print("─" * 50)
 
         await page.wait_for_event("close", timeout=0)
         print("✓ Steps 1 + 2 complete")
+
+    # Ask about quizzes outside the playwright context so a new session can open
+    course_url = f"{BS_BASE}/d2l/home/{ou}"
+    loop = asyncio.get_event_loop()
+
+    answer = await loop.run_in_executor(None, _prompt, "Continue with Quiz Automator? (y/n): ")
+    if answer.strip().lower() in ("y", "yes"):
+        print("\nStarting Quiz Automator...")
+        from browser import run as run_quiz
+        settings = {"set_in_gradebook": True, "set_auto_submit": True}
+        await run_quiz([course_url], dry_run=dry_run, settings=settings)
+
+    answer = await loop.run_in_executor(None, _prompt, "Continue with Assignment Automator? (y/n): ")
+    if answer.strip().lower() in ("y", "yes"):
+        print("\nStarting Assignment Automator...")
+        from browser import run_assignments
+        settings = {"set_in_gradebook": True}
+        await run_assignments([course_url], dry_run=dry_run, settings=settings)
+
+    answer = await loop.run_in_executor(None, _prompt, "Continue with Course Outline? (y/n): ")
+    if answer.strip().lower() in ("y", "yes"):
+        print("\nStarting Course Outline Automator...")
+        from course_outline_automator import run as run_outline
+        await run_outline(dry_run=dry_run, course_url=course_url, prompt_fn=_prompt)
+
+        answer = await loop.run_in_executor(None, _prompt, "Was the course outline found? (y/n): ")
+        if answer.strip().lower() not in ("y", "yes"):
+            _note("No syllabus present in course shell - syllabus not applied to syllabus template. Gradebook not set up.")
+        else:
+            answer = await loop.run_in_executor(None, _prompt, "Were there grade categories in the gradebook? (y/n): ")
+            if answer.strip().lower() not in ("y", "yes"):
+                _note("Grade items present in gradebook so made one category weighted 100% and all items have been placed in this category")
 
 
 if __name__ == "__main__":
