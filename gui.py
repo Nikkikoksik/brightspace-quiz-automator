@@ -100,7 +100,7 @@ class App(ctk.CTk):
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
         sidebar.grid_columnconfigure(0, weight=1)
-        sidebar.grid_rowconfigure(6, weight=1)  # spacer pushes Settings to bottom
+        sidebar.grid_rowconfigure(8, weight=1)  # spacer pushes Settings to bottom
 
         ctk.CTkLabel(
             sidebar, text="Brightspace\nAutomator",
@@ -109,11 +109,10 @@ class App(ctk.CTk):
         ).grid(row=0, column=0, sticky="w", padx=20, pady=(28, 20))
 
         nav_items = [
+            ("Staging",              "  Staging"),
+            ("Course Outline",       "  Course Outline"),
             ("Quiz Automator",       "  Quizzes"),
             ("Assignment Automator", "  Assignments"),
-            ("Timer Fix",            "  Timer Fix"),
-            ("Course Outline",       "  Course Outline"),
-            ("Staging",              "  Staging"),
         ]
         self._nav_btns = {}
         for r, (key, label) in enumerate(nav_items, start=1):
@@ -128,7 +127,24 @@ class App(ctk.CTk):
             self._nav_btns[key] = btn
 
         ctk.CTkFrame(sidebar, height=1, fg_color="#2a2a45").grid(
-            row=6, column=0, sticky="sew", padx=16, pady=(0, 4),
+            row=5, column=0, sticky="ew", padx=16, pady=(8, 0),
+        )
+        ctk.CTkLabel(
+            sidebar, text="  OPTIONAL",
+            font=ctk.CTkFont(size=10), text_color="#555577",
+        ).grid(row=6, column=0, sticky="w", padx=8, pady=(2, 0))
+        timer_btn = ctk.CTkButton(
+            sidebar, text="  Timer Fix", anchor="w", height=40,
+            fg_color="transparent", hover_color=_NAV_HOVER,
+            text_color="#aaaacc", font=ctk.CTkFont(size=13),
+            corner_radius=6,
+            command=lambda: self._show_panel("Timer Fix"),
+        )
+        timer_btn.grid(row=7, column=0, sticky="ew", padx=8, pady=2)
+        self._nav_btns["Timer Fix"] = timer_btn
+
+        ctk.CTkFrame(sidebar, height=1, fg_color="#2a2a45").grid(
+            row=9, column=0, sticky="sew", padx=16, pady=(0, 4),
         )
         settings_btn = ctk.CTkButton(
             sidebar, text=f"  Settings  {VERSION}", anchor="w", height=40,
@@ -137,7 +153,7 @@ class App(ctk.CTk):
             corner_radius=6,
             command=lambda: self._show_panel("Settings"),
         )
-        settings_btn.grid(row=7, column=0, sticky="ew", padx=8, pady=(0, 16))
+        settings_btn.grid(row=10, column=0, sticky="ew", padx=8, pady=(0, 16))
         self._nav_btns["Settings"] = settings_btn
 
         # Content area
@@ -162,7 +178,7 @@ class App(ctk.CTk):
             self._panels[key] = panel
             builder(panel)
 
-        self._show_panel("Quiz Automator")
+        self._show_panel("Staging")
 
     def _show_panel(self, name: str):
         for panel in self._panels.values():
