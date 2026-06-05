@@ -19,6 +19,7 @@ VERSION = "v0.6.1"
 _HERE       = Path(__file__).parent
 from config import COURSES_FILE
 OUTLINE_CFG = str(_HERE / "outline_config.json")
+NOTES_FILE  = str(_HERE / "notes.txt")
 
 _SIDEBAR_BG = "#1a1a2e"
 _NAV_HOVER  = "#252540"
@@ -71,6 +72,7 @@ class App(ctk.CTk):
         self._build_ui()
         self._load_courses()
         self._load_config()
+        self._load_notes()
         self.after(100, self._poll_log)
 
     # ── Layout helpers ────────────────────────────────────────────────────────
@@ -458,6 +460,7 @@ class App(ctk.CTk):
             body, font=ctk.CTkFont(family="Courier New", size=12),
         )
         self._notes_box.pack(fill="both", expand=True)
+        self._notes_box.bind("<KeyRelease>", lambda e: self._save_notes())
 
     def _notes_copy(self):
         text = self._notes_box.get("1.0", "end").strip()
@@ -467,10 +470,28 @@ class App(ctk.CTk):
 
     def _notes_clear(self):
         self._notes_box.delete("1.0", "end")
+        self._save_notes()
 
     def append_note(self, text: str):
         """Append a note line to the Notes tab (called from worker threads via queue)."""
         self._notes_box.insert("end", text + "\n")
+        self._save_notes()
+
+    def _save_notes(self):
+        try:
+            with open(NOTES_FILE, "w", encoding="utf-8") as f:
+                f.write(self._notes_box.get("1.0", "end"))
+        except Exception:
+            pass
+
+    def _load_notes(self):
+        try:
+            with open(NOTES_FILE, encoding="utf-8") as f:
+                content = f.read()
+            if content.strip():
+                self._notes_box.insert("1.0", content)
+        except FileNotFoundError:
+            pass
 
     # ── Settings panel ────────────────────────────────────────────────────────
 

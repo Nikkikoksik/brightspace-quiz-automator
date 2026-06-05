@@ -35,30 +35,13 @@ git branch
 
 ```powershell
 git fetch
-```
-> Downloads latest changes from GitHub. Nothing changes locally yet — safe to run anytime.
-
-```powershell
-git checkout dev
+git switch dev
 git pull
-```
-> Switches to `dev` and pulls your teammates' latest changes.
-
-```powershell
-git checkout nick
-git pull origin nick --rebase
-```
-> Switches back to your branch and pulls any changes you pushed from another machine.
-
-```powershell
+git switch nick
 git rebase dev
-```
-> Replays your `nick` commits on top of the latest `dev`. Keeps you current without touching anyone else's branch.
-
-```powershell
 git push origin nick --force-with-lease
 ```
-> Pushes your updated `nick` branch to GitHub. `--force-with-lease` is required after a rebase and is safe on your personal branch.
+> Syncs your local nick with the latest dev. Always do this at the start of a session.
 
 ---
 
@@ -67,17 +50,12 @@ git push origin nick --force-with-lease
 ```powershell
 git add .
 git commit -m "describe what you changed"
-```
-> Stage and commit all changed files. Make sure you're on `nick` when you do this.
-
-```powershell
 git switch dev
-git merge nick
+git merge nick --no-edit
 git push origin dev
 git switch nick
 ```
-> Switch to dev, merge your nick changes in, push, then go back to nick.
-> ⚠ Don't forget `git merge nick` — skipping it means dev won't have your changes even after pushing.
+> The `--no-edit` flag stops vim from opening during the merge — always include it.
 
 ---
 

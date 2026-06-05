@@ -347,9 +347,10 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
     """Upload docx to CourseBridge, return HTML string."""
     print("\nStep 3 — CourseBridge conversion...")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=60)
+        browser = await p.chromium.launch(headless=False, slow_mo=60, args=["--start-maximized"])
         context = await browser.new_context(
-            storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None
+            storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None,
+            no_viewport=True,
         )
         await context.grant_permissions(["clipboard-read", "clipboard-write"])
         page = await context.new_page()
@@ -592,9 +593,10 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
         sys.exit(1)
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
-            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None
+            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
         await _wait_for_bs_login(page, context)
@@ -648,9 +650,10 @@ async def test_step4(course_url: str = ""):
         raise RuntimeError("Course CRN or URL is required.")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
-            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None
+            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
         await _wait_for_bs_login(page, context)

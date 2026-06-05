@@ -145,9 +145,10 @@ async def run_step1(course_input: str, dry_run: bool = False):
     Step 1: Find the staging shell for a CRN, URL, or full course code and hide the blueprint module.
     """
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
             storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
 
@@ -179,9 +180,10 @@ async def run_step2(course_input: str, dry_run: bool = False):
     Leaves the browser open so the user can select the source course and click Copy Components manually.
     """
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
             storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
 
@@ -228,9 +230,10 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
     _note   = note_fn if note_fn else lambda t: print(f"[NOTE] {t}")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
             storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
 

@@ -46,9 +46,10 @@ async def _wait_for_login(page, context):
 async def run_bs_login():
     """Standalone: open Brightspace, wait for login, save session. Used by Settings panel."""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
         await _wait_for_login(page, context)
@@ -57,9 +58,10 @@ async def run_bs_login():
 
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None, review_fn=None):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
 
@@ -132,9 +134,10 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
 async def run_verify(urls: list[str]):
     """Read-only pass: open every quiz and report current gradebook + timer settings."""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
 
@@ -195,9 +198,10 @@ async def run_verify(urls: list[str]):
 async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=None):
     """Re-run only the auto-submit timer fix on quizzes (no gradebook)."""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
         )
         page = await context.new_page()
 

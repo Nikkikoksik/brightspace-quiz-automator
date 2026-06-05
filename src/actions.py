@@ -115,19 +115,27 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             print("    Timer     : no timer configured — skipping")
             return
 
-        if dry_run:
-            print("    Timer     : [DRY RUN] Would open Timer Settings and select auto-submit")
-            return
-
         print("    Timer     : opening Timer Settings...")
         await timer_link.click()
         await page.wait_for_selector(
             "input[type='radio'][name='timeLimitOption'][value='autosubmit']",
             timeout=30000,
         )
-        await page.locator(
-            "input[type='radio'][name='timeLimitOption'][value='autosubmit']"
-        ).click()
+
+        radio = page.locator("input[type='radio'][name='timeLimitOption'][value='autosubmit']")
+        if await radio.is_checked():
+            print("    Timer     : already auto-submit — skipping")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+            return
+
+        if dry_run:
+            print("    Timer     : [DRY RUN] Would select auto-submit")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+            return
+
+        await radio.click()
 
         await page.wait_for_timeout(400)
         coords = await page.evaluate("""
