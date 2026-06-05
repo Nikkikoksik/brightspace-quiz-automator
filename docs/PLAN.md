@@ -1,69 +1,48 @@
 # Plan
 
-Check off each goal as it's confirmed working.
+---
+
+## Current Focus — Staging Automator
+
+Building a pipeline that fully stages a course from scratch using a CRN.
+
+| Step | What it does | Status |
+|---|---|---|
+| Step 1 | Find `_Staged` shell by CRN, hide blueprint module | Done ✅ |
+| Step 2 | Copy all components from source course | Done ✅ |
+| Step 2g | Run quiz + assignment automator to link gradebook | Written, needs testing ⚠️ |
+| Step 3 | Course outline — download, convert, paste into Brightspace | Not started ❌ |
+| Step 4 | Re-label shell from `_Staged` → `_Ready` | Not started ❌ |
+
+**Test Step 2g first:**
+```
+py staging_automator.py 2g 31899
+```
+
+**After that:**
+- Add `run_step3` to `staging_automator.py` (calls `course_outline_automator.run()`)
+- Add Step 2g + Step 3 buttons to GUI Staging tab
+- Add "Run All" button that chains all steps
 
 ---
 
-## In Progress
+## Other Outstanding Items
 
-- [ ] **Full Staging Automation — building step by step**
-  - [x] Scrape Ready to Send list from lms.harshsaw.ca → staging_queue.txt
-  - [x] Filter for semester codes ending in 10/20/30
-  - [x] `find_staging_shell(page, crn)` — searches Brightspace, returns _Staged URL
-  - [x] Test `find_staging_shell` against a real CRN
-  - [x] Step 1: Hide "How to Use This Blueprint" module (switch found in smart-curriculum iframe)
-  - [ ] Step 2: Copy Components
-  - [ ] Step 3: Course Outline (already built)
-  - [ ] Step 4: Gradebook (leave for later)
-  - [ ] Step 5: Re-label to "Ready"
-
-- [x] **Assignment Automator — Gradebook not saving** — resolved
-
----
-
-## Up Next
-
-- [ ] **Course Outline — Step 4 full test with real HTML**
-  - TinyMCE `setContent()` works ✅
-  - Need to confirm the two-save flow actually saves to Brightspace
-
-- [ ] **Quiz Automator — Skip timer if already set**
-  - Gradebook: already skips ✅
-  - Timer auto-submit: no skip check yet
-
-- [ ] **Per-step test buttons (Steps 1–3)**
-  - Step 4 test button done ✅
-  - Steps 1, 2, 3 test buttons not built yet
+- [ ] **Quiz automator** — no skip check for timer if it's already set (gradebook already skips)
+- [ ] **Course Outline** — confirm the two-save flow actually saves to Brightspace (TinyMCE `setContent()` works but full save untested)
 
 ---
 
 ## Done
 
-- [x] run.bat — auto-installs dependencies on first run
-- [x] run.bat — checks for updates from GitHub on every launch
-- [x] Playwright browser installed once, not every launch
-- [x] GUI with three tabs (Quiz / Assignment / Course Outline)
-- [x] Quiz automator — gradebook + auto-submit settings
-- [x] Quiz automator — skip if already in gradebook
-- [x] Quiz automator — timer wait increased to 30s (was 6s)
-- [x] Assignment automator — tab + run button wired up
-- [x] Pause / Resume button — Quiz tab
-- [x] Pause / Resume button — Assignment tab
-- [x] Course URLs saved between runs
-- [x] CourseBridge credentials saved between runs
-- [x] Step 1 — Find course outline via Brightspace API
-- [x] Step 1 — CRN lookup (shadow DOM fix)
-- [x] Step 1 — Confirm before downloading, open file in Windows for review
-- [x] Step 1 — Downloads saved to `downloads/` folder
-- [x] Step 1 — Search only for "outline"
-- [x] Step 2 — PDF → DOCX conversion
-- [x] Step 3 — CourseBridge upload + conversion
-- [x] Step 3 — HTML preview opens in Notepad
-- [x] Step 4 — Navigate to Course Syllabus topic via API
-- [x] Step 4 — Click Options → Edit via shadow DOM
-- [x] Step 4 — Set content via TinyMCE API
-- [x] Step 4 — Test Step 4 button in GUI
-- [x] Login wait — confirms on /d2l/home before saving session
-- [x] Friend's session persistence fixed
-- [x] staging_scraper.py — scrape + filter course list
-- [x] STAGING_PROCESS.md documented
+- [x] GUI — Quiz, Assignment, Course Outline tabs
+- [x] Quiz automator — gradebook + auto-submit, skips if already set
+- [x] Assignment automator — gradebook linking
+- [x] Course Outline — find + download outline from Brightspace
+- [x] Course Outline — PDF → DOCX conversion
+- [x] Course Outline — CourseBridge upload + HTML output
+- [x] Course Outline — paste HTML into TinyMCE in Brightspace
+- [x] Staging scraper — scrape + filter course list from lms.harshsaw.ca
+- [x] Staging Step 1 — hide blueprint module
+- [x] Staging Step 2 — copy all components from source course
+- [x] Auto-update on launch, session persistence, Pause/Resume buttons
