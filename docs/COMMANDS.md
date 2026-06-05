@@ -62,35 +62,20 @@ git push origin nick --force-with-lease
 
 ---
 
-## Git — After Making and Committing a Change
+## Git — Committing and Pushing to Dev
 
 ```powershell
-git add <filename>
+git add .
 git commit -m "describe what you changed"
 ```
-> Stage and commit your change. Use specific filenames instead of `git add -A` to avoid accidentally committing unrelated files.
+> Stage and commit all changed files.
 
 ```powershell
-git fetch
-git checkout dev
-git pull
-git checkout nick
-git rebase dev
-git push origin nick --force-with-lease
-```
-> Sync with the latest `dev` then push your change to `nick`.
-
----
-
-## Git — Merging to Dev (only when change is confirmed working)
-
-```powershell
-git checkout dev
-git merge nick
+git switch dev
 git push origin dev
-git checkout nick
+git switch nick
 ```
-> Only do this after confirming the feature works. Never commit directly to `dev`.
+> Switch to dev, push, then go back to your working branch.
 
 ---
 

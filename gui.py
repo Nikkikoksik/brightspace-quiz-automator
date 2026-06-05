@@ -36,12 +36,17 @@ class _GUIPrompter:
         event  = threading.Event()
 
         def show():
-            if "(y/n)" in prompt:
-                ans = messagebox.askyesno("Confirmation", prompt.replace("(y/n)", "").strip())
-                result[0] = "y" if ans else "n"
-            else:
-                messagebox.showinfo("Action Required", prompt)
-                result[0] = ""
+            self._root.lift()
+            self._root.attributes("-topmost", True)
+            try:
+                if "(y/n)" in prompt:
+                    ans = messagebox.askyesno("Confirmation", prompt.replace("(y/n)", "").strip())
+                    result[0] = "y" if ans else "n"
+                else:
+                    messagebox.showinfo("Action Required", prompt)
+                    result[0] = ""
+            finally:
+                self._root.attributes("-topmost", False)
             event.set()
 
         self._root.after(0, show)
