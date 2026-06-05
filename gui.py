@@ -413,13 +413,6 @@ class App(ctk.CTk):
         )
         self._staging_step1_btn.pack(fill="x", pady=(0, 8))
 
-        self._section_label(body, "SOURCE COURSE  (required for Steps 1+2)")
-        self._staging_source = ctk.CTkEntry(
-            body, placeholder_text="e.g. ASTF-104-002-31210.202530",
-            height=38,
-        )
-        self._staging_source.pack(fill="x", pady=(0, 8))
-
         self._staging_steps12_btn = ctk.CTkButton(
             body, text="▶   STEPS 1 + 2 — Hide Blueprint + Copy Components", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
@@ -1167,10 +1160,6 @@ class App(ctk.CTk):
 
     def _start_staging_steps_1_2(self):
         crn = self._staging_crn.get().strip()
-        source = self._staging_source.get().strip()
-        if not source:
-            self._append(self._staging_log, "⚠  Source course is required for Steps 1+2.")
-            return
         if not crn:
             queue_file = str(_HERE / "staging_queue.txt")
             try:
@@ -1202,7 +1191,7 @@ class App(ctk.CTk):
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
             try:
-                asyncio.run(run_steps_1_2(crn, source, dry_run=dry_run))
+                asyncio.run(run_steps_1_2(crn, dry_run=dry_run))
             except Exception as e:
                 q.put(("staging", f"✗  {e}"))
             finally:
