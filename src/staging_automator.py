@@ -14,7 +14,7 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
 
 from playwright.async_api import async_playwright
-from browser import SESSION_FILE, _wait_for_login, run as browser_run, run_assignments as browser_run_assignments
+from browser import SESSION_FILE, _wait_for_login
 from staging_scraper import extract_crn, find_staging_shell
 
 _HERE   = Path(__file__).parent.parent
@@ -155,11 +155,11 @@ async def run_step1(course_input: str, dry_run: bool = False):
         await browser.close()
 
 
-async def run_step2(course_input: str, source_course: str = "", dry_run: bool = False):
+async def run_step2(course_input: str, source_course: str, dry_run: bool = False):
     """
     Step 2: Open Course Admin → Import/Export/Copy Components → Search for offering.
     course_input: CRN or full code for the staging shell.
-    source_course: optional override. If not provided, opens platform tools so user can pick manually.
+    source_course: course code to search for in the offering popup (e.g. 'ASTF-104-002-31210.202530').
     """
     crn = extract_crn(course_input) if "." in course_input else course_input.strip()
     if not crn:
@@ -190,20 +190,6 @@ async def run_step2(course_input: str, source_course: str = "", dry_run: bool = 
             return
 
         print(f"  OU: {ou}")
-
-        # If no source course provided, open platform tools so user can pick
-        if not source_course:
-            print(f"\n  Opening course list for CRN {crn}...")
-            await page.goto(f"{BS_BASE}/d2l/platformTools/courses/6606?coursesTab=1", wait_until="domcontentloaded")
-            await page.wait_for_load_state("networkidle", timeout=20000)
-            search = page.locator("input[aria-label='Search Courses']")
-            await search.fill(crn)
-            await search.press("Enter")
-            await page.wait_for_timeout(2000)
-            print("  ─" * 25)
-            print("  Look through the courses in the browser.")
-            print("  Find the source course (not _Staged, not _Ready).")
-            source_course = input("  Type the offering code of the source course: ").strip()
 
         # Course Admin
         print("  Navigating to Course Admin...")
@@ -242,13 +228,14 @@ async def run_step2(course_input: str, source_course: str = "", dry_run: bool = 
         await body_frame.wait_for_load_state("domcontentloaded", timeout=15000)
         await body_frame.wait_for_timeout(1000)
 
-        # Select matching result radio button (match by full source course name)
+        # Select matching result radio button (row whose offering code contains the CRN)
         print("  Selecting matching result...")
+        crn = extract_crn(source_course) if "." in source_course else source_course.strip()
         rows = await body_frame.locator("tr").all()
         selected = False
         for row in rows:
             text = await row.inner_text()
-            if source_course in text:
+            if crn in text:
                 radio = row.locator("input[type='radio']")
                 if await radio.count() > 0:
                     await radio.first.click()
@@ -272,92 +259,17 @@ async def run_step2(course_input: str, source_course: str = "", dry_run: bool = 
             raise Exception("Could not find 'Add Selected' button in any popup frame")
         await add_frame.locator("button:has-text('Add Selected')").first.click()
         await page.wait_for_load_state("domcontentloaded", timeout=15000)
-        await page.wait_for_timeout(1000)
-
-        # Click Copy All Components
-        print("  Clicking Copy All Components...")
-        await page.locator("button:has-text('Copy All Components')").first.click()
-
-        # Wait for copy to finish — can take a long time
-        print("  Waiting for copy to complete (this may take a while)...")
-        await page.wait_for_selector("button:has-text('View Content')", timeout=300000)
-        print("  ✓ Copy complete — clicking View Content...")
-        await page.locator("button:has-text('View Content')").first.click()
-        await page.wait_for_load_state("domcontentloaded", timeout=15000)
 
         print(f"\n{'─' * 50}")
-        print("✓ Step 2 — components copied. Ready for next step.")
+        print("✓ Step 2 — offering selected. Ready for next step.")
         input("  Press Enter to close...")
         await browser.close()
-
-
-async def run_step2_gradebook(course_input: str, dry_run: bool = False, pause_fn=None, ask_fn=None):
-    """
-    Step 2b: Run quiz + assignment automator on the staged course to link everything to gradebook.
-    course_input: CRN or full code for the staging shell.
-    """
-    crn = extract_crn(course_input) if "." in course_input else course_input.strip()
-    if not crn:
-        print(f"✗ Could not extract CRN from {course_input!r}")
-        return
-
-    print(f"CRN: {crn}")
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80)
-        context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
-        )
-        page = await context.new_page()
-
-        await _wait_for_login(page, context)
-
-        href = await find_staging_shell(page, crn)
-        if not href:
-            print(f"✗ No staging shell found for CRN {crn}")
-            await browser.close()
-            return
-
-        ou = _extract_ou(href)
-        if not ou:
-            print(f"✗ Could not extract OU from href {href!r}")
-            await browser.close()
-            return
-
-        print(f"  OU: {ou}")
-        await browser.close()
-
-    quiz_url = f"{BS_BASE}/d2l/lms/quizzing/admin/quizzes_manage.d2l?ou={ou}"
-    assign_url = f"{BS_BASE}/d2l/lms/dropbox/user/folders_list.d2l?ou={ou}"
-
-    print(f"\n{'─' * 50}")
-    print("Step 2b — Quizzes (gradebook + auto-submit)...")
-    await browser_run(
-        [quiz_url],
-        dry_run=dry_run,
-        settings={"set_in_gradebook": True, "set_auto_submit": True},
-        pause_fn=pause_fn,
-        ask_fn=ask_fn,
-    )
-
-    print(f"\n{'─' * 50}")
-    print("Step 2b — Assignments (gradebook)...")
-    await browser_run_assignments(
-        [assign_url],
-        dry_run=dry_run,
-        settings={"set_in_gradebook": True},
-        pause_fn=pause_fn,
-        ask_fn=ask_fn,
-    )
-
-    print(f"\n{'─' * 50}")
-    print("✓ Step 2b complete — quizzes and assignments linked to gradebook.")
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Staging automator")
-    parser.add_argument("step", choices=["1", "2", "2g"], help="Step to run (2g = gradebook)")
+    parser.add_argument("step", choices=["1", "2"], help="Step to run")
     parser.add_argument("crn", help="CRN or full course code for the staging shell")
     parser.add_argument("--source", help="Source course code (Step 2 only)")
     parser.add_argument("--dry-run", action="store_true")
@@ -365,6 +277,6 @@ if __name__ == "__main__":
     if args.step == "1":
         asyncio.run(run_step1(args.crn, dry_run=args.dry_run))
     elif args.step == "2":
-        asyncio.run(run_step2(args.crn, args.source or "", dry_run=args.dry_run))
-    elif args.step == "2g":
-        asyncio.run(run_step2_gradebook(args.crn, dry_run=args.dry_run))
+        if not args.source:
+            parser.error("--source is required for step 2")
+        asyncio.run(run_step2(args.crn, args.source, dry_run=args.dry_run))

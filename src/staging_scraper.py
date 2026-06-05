@@ -206,7 +206,6 @@ async def find_staging_shell(page, crn: str) -> str | None:
 
     await page.mouse.click(inp["x"], inp["y"])
     await page.wait_for_timeout(300)
-    await page.keyboard.press("Control+a")
     await page.keyboard.type(crn)
     await page.wait_for_timeout(2000)   # wait for results
 
@@ -215,7 +214,7 @@ async def find_staging_shell(page, crn: str) -> str | None:
     staged_href = None
     for link in links:
         text = (await link.inner_text()).strip()
-        if "_Staged" in text and "_Ready" not in text:
+        if "_Staged" in text:
             staged_href = await link.get_attribute("href")
             print(f"  ✓ Found: {text[:80]}")
             break
