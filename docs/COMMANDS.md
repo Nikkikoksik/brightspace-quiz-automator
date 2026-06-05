@@ -68,14 +68,16 @@ git push origin nick --force-with-lease
 git add .
 git commit -m "describe what you changed"
 ```
-> Stage and commit all changed files.
+> Stage and commit all changed files. Make sure you're on `nick` when you do this.
 
 ```powershell
 git switch dev
+git merge nick
 git push origin dev
 git switch nick
 ```
-> Switch to dev, push, then go back to your working branch.
+> Switch to dev, merge your nick changes in, push, then go back to nick.
+> ⚠ Don't forget `git merge nick` — skipping it means dev won't have your changes even after pushing.
 
 ---
 
