@@ -237,7 +237,14 @@ class App(ctk.CTk):
             fg_color="#555555", hover_color="#444444",
             command=self._toggle_quiz_pause, state="disabled",
         )
-        self._quiz_pause_btn.pack(fill="x", pady=(0, 12))
+        self._quiz_pause_btn.pack(fill="x", pady=(0, 6))
+
+        self._quiz_verify_btn = ctk.CTkButton(
+            body, text="🔍   VERIFY SETTINGS  (read-only check, no changes)", height=38,
+            fg_color="#2a3a2a", hover_color="#3a5a3a",
+            command=self._start_quiz_verify,
+        )
+        self._quiz_verify_btn.pack(fill="x", pady=(0, 12))
 
         self._section_label(body, "LOG")
         self._quiz_log = ctk.CTkTextbox(
@@ -674,6 +681,7 @@ class App(ctk.CTk):
                 elif msg == "__QUIZ_DONE__":
                     self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
                     self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
+                    self._quiz_verify_btn.configure(state="normal", text="🔍   VERIFY SETTINGS  (read-only check, no changes)")
                     self._resume_event.set()
                     self.after(0, self._post_quiz_review)
                 elif msg == "__ASSIGN_DONE__":
@@ -685,6 +693,7 @@ class App(ctk.CTk):
                     if tag == "quiz":
                         self._quiz_run_btn.configure(state="normal", text="▶   RUN QUIZ AUTOMATOR")
                         self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
+                        self._quiz_verify_btn.configure(state="normal", text="🔍   VERIFY SETTINGS  (read-only check, no changes)")
                         self._resume_event.set()
                     elif tag == "assign":
                         self._assign_run_btn.configure(state="normal", text="▶   RUN ASSIGNMENT AUTOMATOR")
@@ -798,6 +807,36 @@ class App(ctk.CTk):
         else:
             self._resume_event.set()
             self._quiz_pause_btn.configure(text="⏸   PAUSE", fg_color="#555555")
+
+    # ── Quiz verify ───────────────────────────────────────────────────────────
+
+    def _start_quiz_verify(self):
+        urls = [e.get().strip() for _, e in self._url_rows if e.get().strip()]
+        if not urls:
+            self._append(self._quiz_log, "⚠  No course URLs entered.")
+            return
+        self._quiz_verify_btn.configure(state="disabled", text="Verifying…")
+        self._quiz_log.configure(state="normal")
+        self._quiz_log.delete("1.0", "end")
+        self._quiz_log.configure(state="disabled")
+        q = self._log_queue
+
+        def worker():
+            from browser import run_verify
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("quiz", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                asyncio.run(run_verify(urls))
+            except Exception as e:
+                q.put(("quiz", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("quiz", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ── Assignment run ────────────────────────────────────────────────────────
 

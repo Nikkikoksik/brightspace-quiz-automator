@@ -27,6 +27,41 @@ def _extract_ou(href: str) -> str | None:
     return m.group(1) if m else None
 
 
+async def _resolve_ou(page, course_input: str) -> tuple[str | None, str | None]:
+    """
+    Return (crn, ou) from a URL, CRN, or full course code.
+    If a Brightspace URL containing /d2l/home/{ou} is given, the OU is extracted
+    directly and the staging shell search is skipped (crn will be None).
+    """
+    course_input = course_input.strip()
+
+    # Direct URL — extract OU immediately, no CRN needed
+    ou = _extract_ou(course_input)
+    if ou:
+        print(f"  URL detected — OU: {ou}")
+        return None, ou
+
+    # CRN or full course code — find the staging shell
+    crn = extract_crn(course_input) if "." in course_input else course_input
+    if not crn:
+        print(f"✗ Could not extract CRN from {course_input!r}")
+        return None, None
+
+    print(f"CRN: {crn}")
+    href = await find_staging_shell(page, crn)
+    if not href:
+        print(f"✗ No staging shell found for CRN {crn}")
+        return crn, None
+
+    ou = _extract_ou(href)
+    if not ou:
+        print(f"✗ Could not extract OU from href {href!r}")
+        return crn, None
+
+    print(f"  OU: {ou}")
+    return crn, ou
+
+
 _FIND_SWITCH_JS = """
     () => {
         function walk(root) {
@@ -107,16 +142,8 @@ async def hide_blueprint_module(page, dry_run: bool = False) -> bool:
 
 async def run_step1(course_input: str, dry_run: bool = False):
     """
-    Step 1: Find the staging shell for a CRN and hide the blueprint module.
-    course_input can be a CRN ('80147') or full course code ('BOOK-110-MAR-80147.202611').
+    Step 1: Find the staging shell for a CRN, URL, or full course code and hide the blueprint module.
     """
-    crn = extract_crn(course_input) if "." in course_input else course_input.strip()
-    if not crn:
-        print(f"✗ Could not extract CRN from {course_input!r}")
-        return
-
-    print(f"CRN: {crn}")
-
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
         context = await browser.new_context(
@@ -126,20 +153,10 @@ async def run_step1(course_input: str, dry_run: bool = False):
 
         await _wait_for_login(page, context)
 
-        # Find the _Staged shell
-        href = await find_staging_shell(page, crn)
-        if not href:
-            print(f"✗ No staging shell found for CRN {crn}")
-            await browser.close()
-            return
-
-        ou = _extract_ou(href)
+        _, ou = await _resolve_ou(page, course_input)
         if not ou:
-            print(f"✗ Could not extract OU from href {href!r}")
             await browser.close()
             return
-
-        print(f"  OU: {ou}")
 
         # Navigate to the Content page
         content_url = f"{BS_BASE}/d2l/le/content/{ou}/Home"
@@ -158,15 +175,9 @@ async def run_step1(course_input: str, dry_run: bool = False):
 async def run_step2(course_input: str, dry_run: bool = False):
     """
     Step 2: Open Course Admin → Import/Export/Copy Components.
+    Accepts a CRN, full course code, or Brightspace URL.
     Leaves the browser open so the user can select the source course and click Copy Components manually.
     """
-    crn = extract_crn(course_input) if "." in course_input else course_input.strip()
-    if not crn:
-        print(f"✗ Could not extract CRN from {course_input!r}")
-        return
-
-    print(f"CRN: {crn}")
-
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
         context = await browser.new_context(
@@ -176,19 +187,10 @@ async def run_step2(course_input: str, dry_run: bool = False):
 
         await _wait_for_login(page, context)
 
-        href = await find_staging_shell(page, crn)
-        if not href:
-            print(f"✗ No staging shell found for CRN {crn}")
-            await browser.close()
-            return
-
-        ou = _extract_ou(href)
+        _, ou = await _resolve_ou(page, course_input)
         if not ou:
-            print(f"✗ Could not extract OU from href {href!r}")
             await browser.close()
             return
-
-        print(f"  OU: {ou}")
 
         print("  Navigating to Course Admin...")
         await page.goto(f"{BS_BASE}/d2l/lp/cmc/main.d2l?ou={ou}", wait_until="domcontentloaded")
@@ -224,12 +226,6 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
     """
     _prompt = prompt_fn if prompt_fn else input
     _note   = note_fn if note_fn else lambda t: print(f"[NOTE] {t}")
-    crn = extract_crn(course_input) if "." in course_input else course_input.strip()
-    if not crn:
-        print(f"✗ Could not extract CRN from {course_input!r}")
-        return
-
-    print(f"CRN: {crn}")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80)
@@ -240,15 +236,8 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
 
         await _wait_for_login(page, context)
 
-        href = await find_staging_shell(page, crn)
-        if not href:
-            print(f"✗ No staging shell found for CRN {crn}")
-            await browser.close()
-            return
-
-        ou = _extract_ou(href)
+        _, ou = await _resolve_ou(page, course_input)
         if not ou:
-            print(f"✗ Could not extract OU from href {href!r}")
             await browser.close()
             return
 
@@ -291,19 +280,28 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
     course_url = f"{BS_BASE}/d2l/home/{ou}"
     loop = asyncio.get_event_loop()
 
+    def _review_fn(label):
+        print(f"\n{'─' * 50}")
+        print(f"✋ {label} done — browser is still open.")
+        print("   Review any missed items, make manual corrections, then close the browser.")
+        print("─" * 50)
+        _prompt("Press Enter when you are done reviewing…")
+
     answer = await loop.run_in_executor(None, _prompt, "Continue with Quiz Automator? (y/n): ")
     if answer.strip().lower() in ("y", "yes"):
         print("\nStarting Quiz Automator...")
         from browser import run as run_quiz
         settings = {"set_in_gradebook": True, "set_auto_submit": True}
-        await run_quiz([course_url], dry_run=dry_run, settings=settings)
+        await run_quiz([course_url], dry_run=dry_run, settings=settings,
+                       review_fn=lambda: _review_fn("Quiz Automator"))
 
     answer = await loop.run_in_executor(None, _prompt, "Continue with Assignment Automator? (y/n): ")
     if answer.strip().lower() in ("y", "yes"):
         print("\nStarting Assignment Automator...")
         from browser import run_assignments
         settings = {"set_in_gradebook": True}
-        await run_assignments([course_url], dry_run=dry_run, settings=settings)
+        await run_assignments([course_url], dry_run=dry_run, settings=settings,
+                              review_fn=lambda: _review_fn("Assignment Automator"))
 
     answer = await loop.run_in_executor(None, _prompt, "Continue with Course Outline? (y/n): ")
     if answer.strip().lower() in ("y", "yes"):

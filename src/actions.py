@@ -294,6 +294,49 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
         await page.wait_for_timeout(300)
 
 
+async def verify_quiz_settings(page: Page) -> dict:
+    """
+    Read current quiz settings without changing anything.
+    Returns {"gradebook": True/False/None, "auto_submit": True/False/None}
+    None means the element wasn't found (no timer configured, etc.)
+    """
+    result = {"gradebook": None, "auto_submit": None}
+
+    # Gradebook status
+    try:
+        grade_btn = page.locator("button.d2l-grade-info").first
+        if await grade_btn.count():
+            div_text = await grade_btn.locator("div").first.inner_text()
+            result["gradebook"] = "Not in Grade Book" not in div_text
+    except Exception:
+        pass
+
+    # Auto-submit timer status
+    try:
+        timing_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Timing")
+        if await timing_btn.count():
+            if await timing_btn.get_attribute("aria-expanded") == "false":
+                await timing_btn.click()
+                await page.wait_for_timeout(600)
+
+        timer_link = page.locator("text=Timer Settings").first
+        if await timer_link.count():
+            await timer_link.click()
+            await page.wait_for_selector(
+                "input[type='radio'][name='timeLimitOption']", timeout=10000
+            )
+            radio = page.locator("input[type='radio'][name='timeLimitOption'][value='autosubmit']")
+            result["auto_submit"] = await radio.is_checked()
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+        else:
+            result["auto_submit"] = None  # no timer on this quiz
+    except Exception:
+        pass
+
+    return result
+
+
 async def save_assignment(page: Page, dry_run: bool):
     """Save the assignment edit page."""
     if dry_run:

@@ -4,7 +4,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls
-from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment
+from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings
 
 SESSION_FILE = str(Path(__file__).parent.parent / "session.json")
 
@@ -126,6 +126,69 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
         print("✓  All done!")
         if review_fn:
             review_fn()
+        await browser.close()
+
+
+async def run_verify(urls: list[str]):
+    """Read-only pass: open every quiz and report current gradebook + timer settings."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=80)
+        context = await browser.new_context(
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None
+        )
+        page = await context.new_page()
+
+        await _wait_for_login(page, context)
+
+        for raw_url in urls:
+            print(f"\n{'─' * 50}")
+            print(f"Course: {raw_url}")
+
+            found = await discover_course_urls(page, raw_url)
+            quiz_url = found.get("quizzes")
+            if not quiz_url:
+                print("✗ Could not find Quizzes link on this course page.")
+                continue
+
+            try:
+                await page.goto(quiz_url, wait_until="commit")
+            except Exception:
+                pass
+            await page.wait_for_url("**/quizzing/**", timeout=60000)
+            await page.wait_for_load_state("networkidle")
+
+            names = await get_quiz_names(page)
+            if not names:
+                print("✗ No quizzes found.")
+                continue
+
+            total = len(names)
+            print(f"  Found {total} quiz(es) — verifying settings (no changes will be made)...\n")
+
+            all_ok = True
+            for i, name in enumerate(names, 1):
+                try:
+                    await page.goto(quiz_url, wait_until="commit")
+                except Exception:
+                    pass
+                await page.wait_for_selector(
+                    "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
+                )
+                await open_quiz_edit(page, name)
+                status = await verify_quiz_settings(page)
+
+                gb  = "✓" if status["gradebook"]  else ("✗ NOT SET" if status["gradebook"]  is False else "—")
+                tmr = "✓" if status["auto_submit"] else ("✗ NOT SET" if status["auto_submit"] is False else "— no timer")
+                ok  = status["gradebook"] is not False and status["auto_submit"] is not False
+                if not ok:
+                    all_ok = False
+                flag = "" if ok else "  ← needs attention"
+                print(f"  [{i}/{total}]  {name}")
+                print(f"           Gradebook: {gb}   Timer auto-submit: {tmr}{flag}")
+
+            print(f"\n{'─' * 50}")
+            print("✓ Verify complete —", "all settings OK" if all_ok else "some quizzes need attention (see above)")
+
         await browser.close()
 
 
