@@ -2,3 +2,4 @@ playwright
 customtkinter
 watchdog
 pdf2docx
+sentry-sdk

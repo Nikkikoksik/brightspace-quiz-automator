@@ -36,6 +36,25 @@ _DIVIDER       = "#2a2a2a"
 _NAV_ACTIVE = "#2e2e52"
 
 
+def _init_sentry(dsn: str = ""):
+    try:
+        import sentry_sdk
+        if dsn:
+            sentry_sdk.init(dsn=dsn, traces_sample_rate=0, release=VERSION)
+    except Exception:
+        pass
+
+
+def _sentry_context(step: str, course: str = ""):
+    try:
+        import sentry_sdk
+        sentry_sdk.set_tag("step", step)
+        if course:
+            sentry_sdk.set_tag("course", course)
+    except Exception:
+        pass
+
+
 class _GUIPrompter:
     """Bridges worker-thread input() calls to main-thread dialogs."""
 
@@ -612,6 +631,13 @@ class App(ctk.CTk):
             command=self._clear_bs_session,
         ).pack(side="left")
 
+        self._section_label(body, "ERROR REPORTING (SENTRY)")
+        sf = ctk.CTkFrame(body)
+        sf.pack(fill="x", pady=(0, 16))
+        ctk.CTkLabel(sf, text="Sentry DSN  (leave blank to disable)", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=16, pady=(14, 2))
+        self._sentry_dsn = ctk.CTkEntry(sf, height=36, placeholder_text="https://...@sentry.io/...")
+        self._sentry_dsn.pack(fill="x", padx=16, pady=(0, 14))
+
         self._save_settings_btn = ctk.CTkButton(
             body, text="Save Settings", height=42, width=160,
             command=self._save_settings,
@@ -632,10 +658,14 @@ class App(ctk.CTk):
             if cfg.get("cb_password"):
                 self._cb_password.delete(0, "end")
                 self._cb_password.insert(0, cfg["cb_password"])
+            if cfg.get("sentry_dsn"):
+                self._sentry_dsn.delete(0, "end")
+                self._sentry_dsn.insert(0, cfg["sentry_dsn"])
+                _init_sentry(cfg["sentry_dsn"])
         except (FileNotFoundError, json.JSONDecodeError):
             pass
 
-    def _save_config(self, course_url=None, email=None, password=None):
+    def _save_config(self, course_url=None, email=None, password=None, sentry_dsn=None):
         try:
             with open(OUTLINE_CFG) as f:
                 cfg = json.load(f)
@@ -647,6 +677,8 @@ class App(ctk.CTk):
             cfg["cb_email"] = email
         if password is not None:
             cfg["cb_password"] = password
+        if sentry_dsn is not None:
+            cfg["sentry_dsn"] = sentry_dsn
         with open(OUTLINE_CFG, "w") as f:
             json.dump(cfg, f)
 
@@ -683,10 +715,13 @@ class App(ctk.CTk):
         self._bs_status.configure(text="✗  No session — log in first", text_color="#f0a500")
 
     def _save_settings(self):
+        dsn = self._sentry_dsn.get().strip()
         self._save_config(
             email=self._cb_email.get().strip(),
             password=self._cb_password.get().strip(),
+            sentry_dsn=dsn,
         )
+        _init_sentry(dsn)
         self._save_settings_btn.configure(text="✓  Saved")
         self.after(1500, lambda: self._save_settings_btn.configure(text="Save Settings"))
 
@@ -889,6 +924,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             success = False
             try:
+                _sentry_context("quizzes", urls[0] if urls else "")
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
                                         pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
@@ -986,6 +1022,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             success = False
             try:
+                _sentry_context("assignments", urls[0] if urls else "")
                 from browser import run_assignments
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
                                             pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
@@ -1129,6 +1166,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             success = False
             try:
+                _sentry_context("quizzes", urls[0] if urls else "")
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
                                         pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn3))
@@ -1163,6 +1201,7 @@ class App(ctk.CTk):
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
             try:
+                _sentry_context("timer_fix", urls[0] if urls else "")
                 from browser import run_timer_fix
                 asyncio.run(run_timer_fix(urls=urls, dry_run=dry_run, ask_fn=ask_fn))
             except Exception as e:
@@ -1419,6 +1458,7 @@ class App(ctk.CTk):
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
             try:
+                _sentry_context("staging", crn)
                 asyncio.run(run_step1(crn, dry_run=dry_run))
             except Exception as e:
                 q.put(("staging", f"✗  {e}"))
