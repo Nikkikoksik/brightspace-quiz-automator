@@ -74,18 +74,33 @@ class _GUIPrompter:
         event  = threading.Event()
 
         def show():
-            self._root.lift()
-            self._root.attributes("-topmost", True)
-            try:
-                if "(y/n)" in prompt:
-                    ans = messagebox.askyesno("Confirmation", prompt.replace("(y/n)", "").strip())
-                    result[0] = "y" if ans else "n"
-                else:
-                    messagebox.showinfo("Action Required", prompt)
-                    result[0] = ""
-            finally:
-                self._root.attributes("-topmost", False)
-            event.set()
+            is_yn = "(y/n)" in prompt
+            msg   = prompt.replace("(y/n)", "").strip()
+
+            dlg = ctk.CTkToplevel(self._root)
+            dlg.title("Confirmation" if is_yn else "Action Required")
+            dlg.resizable(False, False)
+            dlg.attributes("-topmost", True)
+            # No grab_set() — keeps dialog non-modal so Chromium stays clickable
+
+            ctk.CTkLabel(dlg, text=msg, wraplength=420, justify="left").pack(padx=24, pady=(20, 12))
+
+            def _respond(val):
+                result[0] = val
+                dlg.destroy()
+                event.set()
+
+            if is_yn:
+                row = ctk.CTkFrame(dlg, fg_color="transparent")
+                row.pack(pady=(0, 20))
+                ctk.CTkButton(row, text="Yes", width=100,
+                              command=lambda: _respond("y")).pack(side="left", padx=8)
+                ctk.CTkButton(row, text="No", width=100,
+                              fg_color=_BTN_DANGER, hover_color=_BTN_DANGER_H,
+                              command=lambda: _respond("n")).pack(side="left", padx=8)
+            else:
+                ctk.CTkButton(dlg, text="OK", width=100,
+                              command=lambda: _respond("")).pack(pady=(0, 20))
 
         self._root.after(0, show)
         event.wait()

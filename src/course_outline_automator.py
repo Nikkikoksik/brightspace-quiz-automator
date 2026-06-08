@@ -170,7 +170,7 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
     print(f"  Opening: {title}...")
 
     # Some topics are direct file links (.docx/.pdf) — goto raises "Download is starting".
-    # Detect that and intercept the download directly instead of crashing.
+    # For these, download silently first then preview in a browser tab before confirming.
     direct_download = False
     try:
         await page.goto(url)
@@ -182,20 +182,42 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
         else:
             raise
 
-    confirm = prompt_fn(f'Found: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
-    if confirm != "y":
-        print(f"  Skipping '{title}'...")
-        return None
-
     if direct_download:
-        print(f"  Direct file link — downloading...")
+        print(f"  Direct file link — downloading for preview...")
         async with page.expect_download(timeout=30000) as dl_info:
-            await page.goto(url)
+            try:
+                await page.goto(url)
+            except Exception as e:
+                if "download is starting" not in str(e).lower():
+                    raise
         download = await dl_info.value
         raw_dest = download_dir / download.suggested_filename
         await download.save_as(raw_dest)
         dest = ensure_extension(raw_dest)
-        print(f"  ✓ Saved: {dest.name}")
+        print(f"  ✓ Downloaded: {dest.name} — opening preview...")
+
+        preview_page = await page.context.new_page()
+        if dest.suffix.lower() == ".pdf":
+            await preview_page.goto(dest.as_uri())
+        else:
+            try:
+                import mammoth
+                with open(dest, "rb") as fh:
+                    html_result = mammoth.convert_to_html(fh)
+                tmp_html = download_dir / f"{dest.stem}_preview.html"
+                tmp_html.write_text(f"<html><body style='font-family:sans-serif;max-width:900px;margin:auto;padding:24px'>{html_result.value}</body></html>", encoding="utf-8")
+                await preview_page.goto(tmp_html.as_uri())
+            except ImportError:
+                await preview_page.goto(dest.as_uri())
+
+        confirm = prompt_fn(f'Previewing: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
+        await preview_page.close()
+
+        if confirm != "y":
+            dest.unlink(missing_ok=True)
+            print(f"  Skipping '{title}'...")
+            return None
+        print(f"  ✓ Confirmed.")
         return dest
 
     dl_coords = await page.evaluate("""
