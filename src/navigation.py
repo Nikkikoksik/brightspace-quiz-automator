@@ -167,6 +167,26 @@ async def _find_action_button(page: Page, name: str) -> dict | None:
     return None
 
 
+async def set_per_page_200(page: Page):
+    """Select 200-per-page in the list page dropdown so all items load at once."""
+    selected = await page.evaluate("""
+        () => {
+            for (const sel of document.querySelectorAll('select')) {
+                for (const opt of sel.options) {
+                    if (opt.value === '200') {
+                        sel.value = '200';
+                        sel.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+    """)
+    if selected:
+        await page.wait_for_timeout(1500)
+
+
 async def get_assignment_names(page: Page) -> list[str]:
     """Read all assignment names from the assignments list page."""
     await page.evaluate("window.scrollTo(0, 0)")
