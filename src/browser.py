@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls
+from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200
 from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings
 
 SESSION_FILE = str(Path(__file__).parent.parent / "session.json")
@@ -296,6 +296,7 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
 
+            await set_per_page_200(page)
             names = await get_assignment_names(page)
             if not names:
                 print("  Course has no assignments — skipping.")
