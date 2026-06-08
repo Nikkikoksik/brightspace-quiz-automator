@@ -99,10 +99,10 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             if limit:
                 names = names[:limit]
             loop = asyncio.get_running_loop()
-            start_from = await loop.run_in_executor(None, ask_fn, total, "quiz") if ask_fn else 1
-            if start_from > 1:
-                names = names[start_from - 1:]
-                print(f"Resuming from #{start_from} of {total}...")
+            start_from, end_at = await loop.run_in_executor(None, ask_fn, total, "quiz") if ask_fn else (1, total)
+            names = names[start_from - 1:end_at]
+            if start_from > 1 or end_at < total:
+                print(f"Processing #{start_from}–#{end_at} of {total} quiz(es)...")
             else:
                 print(f"Found {total} quiz(es). Starting...")
 
@@ -195,7 +195,7 @@ async def run_verify(urls: list[str]):
         await browser.close()
 
 
-async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=None):
+async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=None, limit: int | None = None):
     """Re-run only the auto-submit timer fix on quizzes (no gradebook)."""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
@@ -227,11 +227,13 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
                 continue
 
             total = len(names)
+            if limit:
+                names = names[:limit]
             loop = asyncio.get_running_loop()
-            start_from = await loop.run_in_executor(None, ask_fn, total, "quiz") if ask_fn else 1
-            if start_from > 1:
-                names = names[start_from - 1:]
-                print(f"Resuming from #{start_from} of {total}...")
+            start_from, end_at = await loop.run_in_executor(None, ask_fn, total, "quiz") if ask_fn else (1, total)
+            names = names[start_from - 1:end_at]
+            if start_from > 1 or end_at < total:
+                print(f"Processing #{start_from}–#{end_at} of {total} quiz(es)...")
             else:
                 print(f"Found {total} quiz(es). Starting timer fix...")
 
@@ -306,10 +308,10 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             if limit:
                 names = names[:limit]
             loop = asyncio.get_running_loop()
-            start_from = await loop.run_in_executor(None, ask_fn, total, "assignment") if ask_fn else 1
-            if start_from > 1:
-                names = names[start_from - 1:]
-                print(f"Resuming from #{start_from} of {total}...")
+            start_from, end_at = await loop.run_in_executor(None, ask_fn, total, "assignment") if ask_fn else (1, total)
+            names = names[start_from - 1:end_at]
+            if start_from > 1 or end_at < total:
+                print(f"Processing #{start_from}–#{end_at} of {total} assignment(s)...")
             else:
                 print(f"Found {total} assignment(s). Starting...")
 

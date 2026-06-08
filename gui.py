@@ -419,9 +419,13 @@ class App(ctk.CTk):
         sf = ctk.CTkFrame(body)
         sf.pack(fill="x", pady=(0, 16))
         self._tfix_dryrun = ctk.BooleanVar(value=False)
+        self._tfix_testmode = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(sf, text="Dry run  (preview only — nothing will be saved)",
                         variable=self._tfix_dryrun,
-                        text_color="#f0a500").pack(anchor="w", padx=16, pady=14)
+                        text_color="#f0a500").pack(anchor="w", padx=16, pady=(14, 4))
+        ctk.CTkCheckBox(sf, text="Test mode  (first quiz only)",
+                        variable=self._tfix_testmode,
+                        text_color="#f0a500").pack(anchor="w", padx=16, pady=(0, 14))
 
         self._tfix_run_btn = ctk.CTkButton(
             body, text="▶  Run Timer Fix", height=52,
@@ -917,14 +921,15 @@ class App(ctk.CTk):
     # ── Ask-start-from dialog ─────────────────────────────────────────────────
 
     def _make_ask_fn(self):
-        result = [1]
+        result = [1, None]  # [start, end]
         event  = threading.Event()
 
         def ask(total, label):
             def show():
                 result[0] = 1
+                result[1] = total
                 dlg = ctk.CTkToplevel(self)
-                dlg.title("Start from")
+                dlg.title("Select range")
                 dlg.resizable(False, False)
                 dlg.attributes("-topmost", True)
                 dlg.lift()
@@ -932,21 +937,35 @@ class App(ctk.CTk):
 
                 ctk.CTkLabel(
                     dlg,
-                    text=f"Found {total} {label}(s).\n\nStart from which number?\n(Leave blank or Cancel = start from 1)",
+                    text=f"Found {total} {label}(s).\nProcess which range?",
                     justify="center",
                 ).pack(padx=24, pady=(20, 10))
 
-                entry = ctk.CTkEntry(dlg, width=80, justify="center")
-                entry.insert(0, "1")
-                entry.pack(padx=24, pady=(0, 10))
-                entry.focus_set()
-                entry.select_range(0, "end")
+                row = ctk.CTkFrame(dlg, fg_color="transparent")
+                row.pack(padx=24, pady=(0, 12))
+                ctk.CTkLabel(row, text="From:").pack(side="left", padx=(0, 6))
+                start_entry = ctk.CTkEntry(row, width=60, justify="center")
+                start_entry.insert(0, "1")
+                start_entry.pack(side="left", padx=(0, 16))
+                ctk.CTkLabel(row, text="To:").pack(side="left", padx=(0, 6))
+                end_entry = ctk.CTkEntry(row, width=60, justify="center")
+                end_entry.insert(0, str(total))
+                end_entry.pack(side="left")
+
+                start_entry.focus_set()
+                start_entry.select_range(0, "end")
 
                 def ok(_=None):
                     try:
-                        val = int(entry.get())
-                        if 1 <= val <= total:
-                            result[0] = val
+                        s = int(start_entry.get())
+                        if 1 <= s <= total:
+                            result[0] = s
+                    except ValueError:
+                        pass
+                    try:
+                        e = int(end_entry.get())
+                        if 1 <= e <= total:
+                            result[1] = e
                     except ValueError:
                         pass
                     dlg.destroy()
@@ -956,7 +975,8 @@ class App(ctk.CTk):
                     dlg.destroy()
                     event.set()
 
-                entry.bind("<Return>", ok)
+                end_entry.bind("<Return>", ok)
+                start_entry.bind("<Return>", lambda _: end_entry.focus_set())
                 dlg.protocol("WM_DELETE_WINDOW", cancel)
 
                 btn_frame = ctk.CTkFrame(dlg, fg_color="transparent")
@@ -966,7 +986,7 @@ class App(ctk.CTk):
 
             self.after(0, show)
             event.wait()
-            return result[0]
+            return result[0], result[1]
 
         return ask
 
@@ -1294,8 +1314,9 @@ class App(ctk.CTk):
         self._tfix_log.configure(state="normal")
         self._tfix_log.delete("1.0", "end")
         self._tfix_log.configure(state="disabled")
-        dry_run = self._tfix_dryrun.get()
-        ask_fn  = self._make_ask_fn()
+        dry_run   = self._tfix_dryrun.get()
+        test_mode = self._tfix_testmode.get()
+        ask_fn    = self._make_ask_fn()
         q = self._log_queue
 
         def worker():
@@ -1307,7 +1328,8 @@ class App(ctk.CTk):
             try:
                 _sentry_context("timer_fix", urls[0] if urls else "")
                 from browser import run_timer_fix
-                asyncio.run(run_timer_fix(urls=urls, dry_run=dry_run, ask_fn=ask_fn))
+                asyncio.run(run_timer_fix(urls=urls, dry_run=dry_run, ask_fn=ask_fn,
+                                          limit=1 if test_mode else None))
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("tfix", f"✗  {e}"))

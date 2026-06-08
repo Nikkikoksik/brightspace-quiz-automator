@@ -242,62 +242,12 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         else:
             print("    Timer     : ⚠ autosubmit radio not found via evaluate")
             return
-        print("    Timer     : radio clicked — looking for dialog footer buttons...")
-
-        await page.wait_for_timeout(400)
-
-        # Dump all footer buttons — pierce into d2l-button shadow root to get the real inner button coords
-        footer_btns = await page.evaluate("""
-            () => {
-                const found = [];
-                function scan(root) {
-                    for (const el of root.querySelectorAll('d2l-button[slot="footer"], button[slot="footer"]')) {
-                        const text = el.textContent.trim();
-                        if (el.shadowRoot) {
-                            const inner = el.shadowRoot.querySelector('button');
-                            if (inner) {
-                                const r = inner.getBoundingClientRect();
-                                found.push({ text, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), visible: r.width > 0, src: 'inner' });
-                                continue;
-                            }
-                        }
-                        const r = el.getBoundingClientRect();
-                        found.push({ text, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), visible: r.width > 0, src: 'outer' });
-                    }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) scan(el.shadowRoot);
-                    }
-                }
-                scan(document);
-                return found;
-            }
-        """)
-        print(f"    Timer     : footer buttons found: {footer_btns}")
-
-        print("    Timer     : clicking OK via evaluate...")
-        clicked = await page.evaluate("""
-            () => {
-                function find(root) {
-                    for (const el of root.querySelectorAll('d2l-button[slot="footer"]')) {
-                        if (el.textContent.trim() === 'OK' && el.shadowRoot) {
-                            const inner = el.shadowRoot.querySelector('button');
-                            if (inner && inner.getBoundingClientRect().width > 0) {
-                                inner.click();
-                                return true;
-                            }
-                        }
-                    }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot && find(el.shadowRoot)) return true;
-                    }
-                    return false;
-                }
-                return find(document);
-            }
-        """)
-        if not clicked:
-            raise Exception("OK inner button not found for evaluate click")
-        print("    Timer     : OK clicked — waiting for dialog to close...")
+        await page.wait_for_timeout(500)
+        radio_state = await radio.is_checked()
+        print(f"    Timer     : radio state after click = {radio_state}")
+        print("    Timer     : pressing Enter to confirm...")
+        await page.keyboard.press("Enter")
+        print("    Timer     : Enter pressed — waiting for dialog to close...")
 
         try:
             await page.wait_for_function("""
@@ -336,37 +286,54 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             pass
 
 
-async def save_quiz(page: Page, dry_run: bool):
-    """Click Save and Close, wait for the page to settle."""
-    if dry_run:
-        print("    Save      : [DRY RUN] Would click Save and Close")
-        return
-    try:
-        all_save_btns = await page.evaluate("""
-            () => {
-                const found = [];
-                function scan(root) {
-                    for (const el of root.querySelectorAll('button, d2l-button')) {
-                        const t = el.textContent.trim();
-                        if (t === 'Save and Close' || t === 'Save') {
-                            const r = el.getBoundingClientRect();
-                            found.push({ text: t, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), visible: r.width > 0 });
+async def _find_button_coords(page: Page, exact_text: str):
+    """Find a d2l-button or button by exact text, piercing shadow roots for real coords."""
+    return await page.evaluate("""
+        (text) => {
+            function find(root) {
+                for (const el of root.querySelectorAll('d2l-button, button')) {
+                    if (el.textContent.trim() === text) {
+                        const target = el.shadowRoot ? el.shadowRoot.querySelector('button') : el;
+                        if (target) {
+                            const r = target.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
                         }
                     }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) scan(el.shadowRoot);
-                    }
                 }
-                scan(document);
-                return found;
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                }
+                return null;
             }
-        """)
-        print(f"    Save      : buttons found: {all_save_btns}")
-        coords = next((b for b in all_save_btns if b["visible"]), None)
-        if not coords:
-            raise Exception(f"Save button not found — candidates: {all_save_btns}")
-        print(f"    Save      : clicking '{coords['text']}' at ({coords['x']}, {coords['y']})...")
-        await page.mouse.click(coords["x"], coords["y"])
+            return find(document);
+        }
+    """, exact_text)
+
+
+async def save_quiz(page: Page, dry_run: bool):
+    """Click Save (commits changes), then Save and Close (exits editor)."""
+    if dry_run:
+        print("    Save      : [DRY RUN] Would click Save then Save and Close")
+        return
+    try:
+        save_coords = await _find_button_coords(page, "Save")
+        if save_coords:
+            print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
+            await page.mouse.click(save_coords["x"], save_coords["y"])
+            await page.wait_for_timeout(800)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
+            print("    Save      : Save clicked ✓")
+        else:
+            print("    Save      : ⚠ Save button not found — skipping intermediate save")
+
+        sac_coords = await _find_button_coords(page, "Save and Close")
+        if not sac_coords:
+            raise Exception("Save and Close button not found")
+        print(f"    Save      : clicking Save and Close at ({sac_coords['x']}, {sac_coords['y']})...")
+        await page.mouse.click(sac_coords["x"], sac_coords["y"])
         print("    Save      : clicked — waiting for navigation...")
         await page.wait_for_load_state("domcontentloaded", timeout=8000)
         print(f"    Save      : ✓  (landed on {page.url[-60:]})")
