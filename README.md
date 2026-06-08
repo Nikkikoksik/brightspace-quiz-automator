@@ -2,7 +2,7 @@
 
 > A desktop tool for Okanagan College instructors that automates repetitive Brightspace (D2L) tasks — bulk-updating quizzes, assignments, course outlines, and the staging process — so you can focus on teaching instead of clicking.
 
-![Version](https://img.shields.io/badge/version-v0.7.0-blue)
+![Version](https://img.shields.io/badge/version-v0.8.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
