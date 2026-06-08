@@ -36,11 +36,15 @@ _DIVIDER       = "#2a2a2a"
 _NAV_ACTIVE = "#2e2e52"
 
 
+_DEFAULT_SENTRY_DSN = "https://b178c330abfc081169e6395ae85da7db@o4511530722459648.ingest.de.sentry.io/4511530734780496"
+
+
 def _init_sentry(dsn: str = ""):
     try:
         import sentry_sdk
-        if dsn:
-            sentry_sdk.init(dsn=dsn, traces_sample_rate=0, release=VERSION)
+        resolved = dsn or _DEFAULT_SENTRY_DSN
+        if resolved:
+            sentry_sdk.init(dsn=resolved, traces_sample_rate=0, release=VERSION)
     except Exception:
         pass
 
@@ -685,8 +689,10 @@ class App(ctk.CTk):
                 self._sentry_dsn.delete(0, "end")
                 self._sentry_dsn.insert(0, cfg["sentry_dsn"])
                 _init_sentry(cfg["sentry_dsn"])
+            else:
+                _init_sentry()
         except (FileNotFoundError, json.JSONDecodeError):
-            pass
+            _init_sentry()
 
     def _save_config(self, course_url=None, email=None, password=None, sentry_dsn=None):
         try:
