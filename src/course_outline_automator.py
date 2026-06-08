@@ -168,14 +168,35 @@ async def _fetch_matching_topics(page: Page, course_id: str) -> list[tuple[str, 
 async def _try_download_candidate(page: Page, title: str, url: str, download_dir: Path, prompt_fn) -> "Path | None":
     """Navigate to one candidate topic, ask user to confirm, download it. Returns path or None."""
     print(f"  Opening: {title}...")
-    await page.goto(url)
-    await page.wait_for_load_state("domcontentloaded")
-    await page.wait_for_timeout(2000)
 
-    confirm = prompt_fn(f'Browser is showing: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
+    # Some topics are direct file links (.docx/.pdf) — goto raises "Download is starting".
+    # Detect that and intercept the download directly instead of crashing.
+    direct_download = False
+    try:
+        await page.goto(url)
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(2000)
+    except Exception as e:
+        if "download is starting" in str(e).lower():
+            direct_download = True
+        else:
+            raise
+
+    confirm = prompt_fn(f'Found: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
     if confirm != "y":
         print(f"  Skipping '{title}'...")
         return None
+
+    if direct_download:
+        print(f"  Direct file link — downloading...")
+        async with page.expect_download(timeout=30000) as dl_info:
+            await page.goto(url)
+        download = await dl_info.value
+        raw_dest = download_dir / download.suggested_filename
+        await download.save_as(raw_dest)
+        dest = ensure_extension(raw_dest)
+        print(f"  ✓ Saved: {dest.name}")
+        return dest
 
     dl_coords = await page.evaluate("""
         () => {
@@ -210,7 +231,6 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
     await download.save_as(raw_dest)
     dest = ensure_extension(raw_dest)
     print(f"  ✓ Saved: {dest.name}")
-    os.startfile(str(dest))
     return dest
 
 

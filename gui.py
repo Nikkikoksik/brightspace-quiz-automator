@@ -55,6 +55,14 @@ def _sentry_context(step: str, course: str = ""):
         pass
 
 
+def _sentry_capture(e: Exception):
+    try:
+        import sentry_sdk
+        sentry_sdk.capture_exception(e)
+    except Exception:
+        pass
+
+
 class _GUIPrompter:
     """Bridges worker-thread input() calls to main-thread dialogs."""
 
@@ -699,6 +707,7 @@ class App(ctk.CTk):
                     text="✓  Session saved", text_color="#4caf50"
                 ))
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("outline", f"✗  Login failed: {e}"))
             finally:
                 sys.stdout = old
@@ -930,6 +939,7 @@ class App(ctk.CTk):
                                         pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
                 success = True
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("quiz", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -968,6 +978,7 @@ class App(ctk.CTk):
             try:
                 asyncio.run(run_verify(urls))
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("quiz", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1028,6 +1039,7 @@ class App(ctk.CTk):
                                             pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
                 success = True
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("assign", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1111,6 +1123,7 @@ class App(ctk.CTk):
                                             pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn2))
                 success = True
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("assign", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1172,6 +1185,7 @@ class App(ctk.CTk):
                                         pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn3))
                 success = True
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("quiz", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1205,6 +1219,7 @@ class App(ctk.CTk):
                 from browser import run_timer_fix
                 asyncio.run(run_timer_fix(urls=urls, dry_run=dry_run, ask_fn=ask_fn))
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("tfix", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1251,6 +1266,7 @@ class App(ctk.CTk):
                     prompt_fn=prompter,
                 ))
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("outline", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1279,6 +1295,7 @@ class App(ctk.CTk):
                 from course_outline_automator import test_step4
                 asyncio.run(test_step4(course_url=course_url))
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("outline", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1320,6 +1337,7 @@ class App(ctk.CTk):
                 for c in filtered:
                     print(f"   {c}")
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("staging", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1461,6 +1479,7 @@ class App(ctk.CTk):
                 _sentry_context("staging", crn)
                 asyncio.run(run_step1(crn, dry_run=dry_run))
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("staging", f"✗  {e}"))
             finally:
                 sys.stdout = old
@@ -1493,6 +1512,7 @@ class App(ctk.CTk):
             try:
                 asyncio.run(run_steps_1_2(crn, dry_run=dry_run, prompt_fn=prompter, note_fn=lambda t: q.put(("note", t))))
             except Exception as e:
+                _sentry_capture(e)
                 q.put(("staging", f"✗  {e}"))
             finally:
                 sys.stdout = old
