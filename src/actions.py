@@ -48,7 +48,20 @@ async def apply_gradebook(page: Page, dry_run: bool):
     """Switch quiz from Not in Grade Book → In Grade Book."""
     try:
         try:
-            await page.wait_for_selector("button.d2l-grade-info", timeout=10000)
+            await page.wait_for_function("""
+                () => {
+                    function find(root) {
+                        for (const el of root.querySelectorAll('button.d2l-grade-info, [class*="grade-info"]')) {
+                            if (el.getBoundingClientRect().width > 0) return true;
+                        }
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.shadowRoot && find(el.shadowRoot)) return true;
+                        }
+                        return false;
+                    }
+                    return find(document);
+                }
+            """, timeout=30000)
         except Exception:
             pass
 
@@ -86,6 +99,27 @@ async def apply_gradebook(page: Page, dry_run: bool):
         await page.wait_for_timeout(300)
 
 
+async def _read_timing_summary(page: Page) -> str | None:
+    """Read the timing enforcement text from the quiz edit page summary."""
+    return await page.evaluate("""
+        () => {
+            function find(root) {
+                for (const el of root.querySelectorAll('d2l-activity-quiz-timing-panel-expanded-summary')) {
+                    if (el.shadowRoot) {
+                        const div = el.shadowRoot.querySelector('div.margin-top-8');
+                        if (div) return div.textContent.trim();
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
+                }
+                return null;
+            }
+            return find(document);
+        }
+    """)
+
+
 async def apply_auto_submit(page: Page, dry_run: bool):
     """Set timer expiry action to 'Automatically submit the quiz attempt'."""
     try:
@@ -102,6 +136,12 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             if await timing_btn.get_attribute("aria-expanded") == "false":
                 await timing_btn.click()
                 await page.wait_for_timeout(600)
+
+        # Pre-check: if summary already shows auto-submit, skip the dialog entirely
+        summary_before = await _read_timing_summary(page)
+        if summary_before == "Auto-submit when time is up":
+            print("    Timer     : already auto-submit (summary confirmed) — skipping")
+            return
 
         # Wait for Timer Settings to appear — short timeout since panel is already expanded
         try:
@@ -135,45 +175,158 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             await page.wait_for_timeout(400)
             return
 
-        await radio.click()
-
-        await page.wait_for_timeout(400)
-        coords = await page.evaluate("""
+        print("    Timer     : clicking radio...")
+        result = await page.evaluate("""
             () => {
-                function find(root) {
-                    for (const el of root.querySelectorAll('d2l-button[slot="footer"]')) {
+                // Find the visible timer dialog by locating a root that has a visible OK footer button
+                function findDialogRoot(root) {
+                    for (const el of root.querySelectorAll('d2l-button[slot="footer"], button[slot="footer"]')) {
                         if (el.textContent.trim() === 'OK') {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                            const inner = el.shadowRoot ? el.shadowRoot.querySelector('button') : el;
+                            if (inner && inner.getBoundingClientRect().width > 0) return root;
                         }
                     }
                     for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                        if (el.shadowRoot) {
+                            const r = findDialogRoot(el.shadowRoot);
+                            if (r) return r;
+                        }
                     }
                     return null;
+                }
+
+                function labelOf(el, root) {
+                    const p = el.closest('label');
+                    if (p) return p.textContent.trim();
+                    if (el.id) {
+                        const lbl = root.querySelector(`label[for="${el.id}"]`);
+                        if (lbl) return lbl.textContent.trim();
+                    }
+                    return el.nextElementSibling?.textContent?.trim() || '';
+                }
+
+                function clickRadio(root) {
+                    // Prefer by label text
+                    for (const el of root.querySelectorAll('input[type="radio"]')) {
+                        if (labelOf(el, root).toLowerCase().includes('automatically submit')) {
+                            el.click();
+                            return { clicked: true, label: labelOf(el, root).slice(0, 60), checked: el.checked };
+                        }
+                    }
+                    // Fall back by value
+                    for (const el of root.querySelectorAll('input[type="radio"]')) {
+                        if (el.value === 'autosubmit') {
+                            el.click();
+                            return { clicked: true, label: labelOf(el, root).slice(0, 60), checked: el.checked };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) {
+                            const r = clickRadio(el.shadowRoot);
+                            if (r) return r;
+                        }
+                    }
+                    return null;
+                }
+
+                const dialogRoot = findDialogRoot(document);
+                if (dialogRoot) {
+                    const r = clickRadio(dialogRoot);
+                    if (r) return r;
+                }
+                return clickRadio(document);
+            }
+        """)
+        if result:
+            print(f"    Timer     : radio '{result.get('label','')}' clicked, checked={result.get('checked')}")
+        else:
+            print("    Timer     : ⚠ autosubmit radio not found via evaluate")
+            return
+        print("    Timer     : radio clicked — looking for dialog footer buttons...")
+
+        await page.wait_for_timeout(400)
+
+        # Dump all footer buttons — pierce into d2l-button shadow root to get the real inner button coords
+        footer_btns = await page.evaluate("""
+            () => {
+                const found = [];
+                function scan(root) {
+                    for (const el of root.querySelectorAll('d2l-button[slot="footer"], button[slot="footer"]')) {
+                        const text = el.textContent.trim();
+                        if (el.shadowRoot) {
+                            const inner = el.shadowRoot.querySelector('button');
+                            if (inner) {
+                                const r = inner.getBoundingClientRect();
+                                found.push({ text, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), visible: r.width > 0, src: 'inner' });
+                                continue;
+                            }
+                        }
+                        const r = el.getBoundingClientRect();
+                        found.push({ text, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), visible: r.width > 0, src: 'outer' });
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) scan(el.shadowRoot);
+                    }
+                }
+                scan(document);
+                return found;
+            }
+        """)
+        print(f"    Timer     : footer buttons found: {footer_btns}")
+
+        print("    Timer     : clicking OK via evaluate...")
+        clicked = await page.evaluate("""
+            () => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('d2l-button[slot="footer"]')) {
+                        if (el.textContent.trim() === 'OK' && el.shadowRoot) {
+                            const inner = el.shadowRoot.querySelector('button');
+                            if (inner && inner.getBoundingClientRect().width > 0) {
+                                inner.click();
+                                return true;
+                            }
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot && find(el.shadowRoot)) return true;
+                    }
+                    return false;
                 }
                 return find(document);
             }
         """)
-        if not coords:
-            raise Exception("OK button not found in shadow DOM")
-        await page.mouse.click(coords["x"], coords["y"])
-        await page.wait_for_function("""
-            () => {
-                function hasOk(root) {
-                    for (const el of root.querySelectorAll('d2l-button[slot="footer"]')) {
-                        if (el.textContent.trim() === 'OK' && el.getBoundingClientRect().width > 0)
-                            return true;
+        if not clicked:
+            raise Exception("OK inner button not found for evaluate click")
+        print("    Timer     : OK clicked — waiting for dialog to close...")
+
+        try:
+            await page.wait_for_function("""
+                () => {
+                    function hasOk(root) {
+                        for (const el of root.querySelectorAll('d2l-button[slot="footer"]')) {
+                            if (el.textContent.trim() === 'OK' && el.getBoundingClientRect().width > 0)
+                                return true;
+                        }
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.shadowRoot && hasOk(el.shadowRoot)) return true;
+                        }
+                        return false;
                     }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot && hasOk(el.shadowRoot)) return true;
-                    }
-                    return false;
+                    return !hasOk(document);
                 }
-                return !hasOk(document);
-            }
-        """, timeout=30000)
-        print("    Timer     : ✓ auto-submit selected")
+            """, timeout=10000)
+            print("    Timer     : dialog closed ✓")
+        except Exception:
+            print("    Timer     : ⚠ dialog did not close after 10s — OK click may have missed")
+
+        print("    Timer     : waiting for API to settle...")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        print("    Timer     : network idle ✓")
+        summary_after = await _read_timing_summary(page)
+        print(f"    Timer     : summary after OK = '{summary_after}'")
 
     except Exception as e:
         print(f"    Timer     : ✗ {e}")
@@ -189,29 +342,34 @@ async def save_quiz(page: Page, dry_run: bool):
         print("    Save      : [DRY RUN] Would click Save and Close")
         return
     try:
-        coords = await page.evaluate("""
+        all_save_btns = await page.evaluate("""
             () => {
-                function find(root) {
+                const found = [];
+                function scan(root) {
                     for (const el of root.querySelectorAll('button, d2l-button')) {
                         const t = el.textContent.trim();
                         if (t === 'Save and Close' || t === 'Save') {
                             const r = el.getBoundingClientRect();
-                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                            found.push({ text: t, x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2), visible: r.width > 0 });
                         }
                     }
                     for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                        if (el.shadowRoot) scan(el.shadowRoot);
                     }
-                    return null;
                 }
-                return find(document);
+                scan(document);
+                return found;
             }
         """)
+        print(f"    Save      : buttons found: {all_save_btns}")
+        coords = next((b for b in all_save_btns if b["visible"]), None)
         if not coords:
-            raise Exception("Save button not found in shadow DOM")
+            raise Exception(f"Save button not found — candidates: {all_save_btns}")
+        print(f"    Save      : clicking '{coords['text']}' at ({coords['x']}, {coords['y']})...")
         await page.mouse.click(coords["x"], coords["y"])
+        print("    Save      : clicked — waiting for navigation...")
         await page.wait_for_load_state("domcontentloaded", timeout=8000)
-        print("    Save      : ✓")
+        print(f"    Save      : ✓  (landed on {page.url[-60:]})")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
 
@@ -219,7 +377,26 @@ async def save_quiz(page: Page, dry_run: bool):
 async def apply_assignment_gradebook(page: Page, dry_run: bool):
     """Switch assignment from Not in Grade Book → In Grade Book (shadow DOM aware)."""
     try:
-        await page.wait_for_timeout(800)
+        try:
+            await page.wait_for_function("""
+                () => {
+                    function find(root) {
+                        for (const el of root.querySelectorAll('button.d2l-grade-info, button[class*="grade-info"], [class*="grade-info"], button, a')) {
+                            const t = el.innerText || el.textContent || '';
+                            if (t.includes('Grade Book') || el.classList.toString().includes('grade')) {
+                                if (el.getBoundingClientRect().width > 0) return true;
+                            }
+                        }
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
+                        }
+                        return false;
+                    }
+                    return find(document);
+                }
+            """, timeout=20000)
+        except Exception:
+            await page.wait_for_timeout(1500)
 
         info = await page.evaluate("""
             () => {

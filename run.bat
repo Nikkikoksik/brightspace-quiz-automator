@@ -39,10 +39,8 @@ if not exist ".playwright_installed" (
     echo installed > .playwright_installed
 )
 
-:: Create desktop shortcut if it doesn't exist yet
-if not exist "%USERPROFILE%\Desktop\Brightspace Automator.lnk" (
-    powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%USERPROFILE%\Desktop\Brightspace Automator.lnk'); $s.TargetPath = '%~dp0run.bat'; $s.WorkingDirectory = '%~dp0'; $s.IconLocation = '%~dp0installer\assets\icon.ico'; $s.Save()"
-)
+:: Create desktop shortcut if it doesn't exist yet (uses PowerShell to find real Desktop path, handles OneDrive)
+powershell -NoProfile -Command "$desk = [Environment]::GetFolderPath('Desktop'); $lnk = Join-Path $desk 'Brightspace Automator.lnk'; if (-not (Test-Path $lnk)) { $ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut($lnk); $s.TargetPath = '%~dp0run.bat'; $s.WorkingDirectory = '%~dp0'; $s.IconLocation = '%~dp0installer\assets\icon.ico'; $s.Save(); Write-Host 'Desktop shortcut created.' }"
 
 :: Check for updates
 %PY% src\auto_update.py

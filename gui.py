@@ -16,11 +16,35 @@ ctk.set_default_color_theme("blue")
 
 VERSION = "v0.7.0"
 
-_HERE       = Path(__file__).parent
-from config import COURSES_FILE
-OUTLINE_CFG      = str(_HERE / "outline_config.json")
-NOTES_FILE       = str(_HERE / "notes.txt")
-STAGING_DONE_FILE = str(_HERE / "staging_done.json")
+_HERE        = Path(__file__).parent
+USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
+USERDATA_DIR.mkdir(parents=True, exist_ok=True)
+
+COURSES_FILE        = str(USERDATA_DIR / "courses.txt")
+OUTLINE_CFG         = str(USERDATA_DIR / "outline_config.json")
+NOTES_FILE          = str(USERDATA_DIR / "notes.txt")
+STAGING_DONE_FILE   = str(USERDATA_DIR / "staging_done.json")
+STAGING_QUEUE_FILE  = str(USERDATA_DIR / "staging_queue.txt")
+SESSION_FILE_GUI    = str(USERDATA_DIR / "session.json")
+COURSE_HISTORY_FILE = str(USERDATA_DIR / "course_history.json")
+
+
+def _migrate_userdata():
+    import shutil
+    legacy = {
+        "courses.txt":         COURSES_FILE,
+        "outline_config.json": OUTLINE_CFG,
+        "notes.txt":           NOTES_FILE,
+        "staging_done.json":   STAGING_DONE_FILE,
+        "staging_queue.txt":   STAGING_QUEUE_FILE,
+        "session.json":        SESSION_FILE_GUI,
+    }
+    for name, dst in legacy.items():
+        src = _HERE / name
+        if src.exists() and not Path(dst).exists():
+            shutil.copy2(src, dst)
+
+_migrate_userdata()
 
 _SIDEBAR_BG    = "#141414"
 _NAV_HOVER     = "#222222"
@@ -209,7 +233,7 @@ class App(ctk.CTk):
             sidebar, text="  OPTIONAL",
             font=ctk.CTkFont(size=10), text_color="#555577",
         ).grid(row=7, column=0, sticky="w", padx=8, pady=(2, 0))
-        for r, (key, label) in enumerate([("Timer Fix", "  Timer Fix"), ("Queue", "  Queue")], start=8):
+        for r, (key, label) in enumerate([("Timer Fix", "  Timer Fix"), ("Queue", "  Queue"), ("History", "  History")], start=8):
             btn = ctk.CTkButton(
                 sidebar, text=label, anchor="w", height=40,
                 fg_color="transparent", hover_color=_NAV_HOVER,
@@ -220,7 +244,7 @@ class App(ctk.CTk):
             btn.grid(row=r, column=0, sticky="ew", padx=8, pady=2)
             self._nav_btns[key] = btn
 
-        sidebar.grid_rowconfigure(10, weight=1)
+        sidebar.grid_rowconfigure(11, weight=1)
         ctk.CTkFrame(sidebar, height=1, fg_color=_DIVIDER).grid(
             row=11, column=0, sticky="sew", padx=16, pady=(0, 4),
         )
@@ -249,6 +273,7 @@ class App(ctk.CTk):
             ("Staging",              self._build_staging_panel),
             ("Queue",                self._build_queue_panel),
             ("Notes",                self._build_notes_panel),
+            ("History",              self._build_history_panel),
             ("Settings",             self._build_settings_panel),
         ]:
             panel = ctk.CTkFrame(content, corner_radius=0, fg_color="transparent")
@@ -269,6 +294,8 @@ class App(ctk.CTk):
                 btn.configure(fg_color=_NAV_ACTIVE, text_color="white")
             else:
                 btn.configure(fg_color="transparent", text_color="#aaaacc")
+        if name == "History":
+            self.after(10, self._load_history_tab)
 
     # ── Quiz panel ────────────────────────────────────────────────────────────
 
@@ -531,7 +558,7 @@ class App(ctk.CTk):
         course = self._queue_add_entry.get().strip()
         if not course:
             return
-        queue_file = str(_HERE / "staging_queue.txt")
+        queue_file = STAGING_QUEUE_FILE
         try:
             with open(queue_file, encoding="utf-8") as f:
                 existing = [l.strip() for l in f if l.strip()]
@@ -545,7 +572,7 @@ class App(ctk.CTk):
         self._load_staging_queue_list()
 
     def _queue_delete_course(self, course: str):
-        queue_file = str(_HERE / "staging_queue.txt")
+        queue_file = STAGING_QUEUE_FILE
         try:
             with open(queue_file, encoding="utf-8") as f:
                 lines = [l.strip() for l in f if l.strip() and l.strip() != course]
@@ -613,6 +640,16 @@ class App(ctk.CTk):
         except FileNotFoundError:
             pass
 
+    # ── History panel ─────────────────────────────────────────────────────────
+
+    def _build_history_panel(self, parent):
+        body = self._panel_body(parent, "History", "Completed quiz and assignment runs")
+        self._history_search = ctk.CTkEntry(body, placeholder_text="Search by URL…", height=32)
+        self._history_search.pack(fill="x", padx=0, pady=(0, 8))
+        self._history_search.bind("<KeyRelease>", lambda e: self._load_history_tab())
+        self._history_scroll = ctk.CTkScrollableFrame(body, fg_color="transparent")
+        self._history_scroll.pack(fill="both", expand=True)
+
     # ── Settings panel ────────────────────────────────────────────────────────
 
     def _build_settings_panel(self, parent):
@@ -635,7 +672,7 @@ class App(ctk.CTk):
         bf = ctk.CTkFrame(body)
         bf.pack(fill="x", pady=(0, 16))
 
-        session_exists = os.path.exists(str(_HERE / "session.json"))
+        session_exists = os.path.exists(SESSION_FILE_GUI)
         self._bs_status = ctk.CTkLabel(
             bf,
             text="✓  Session saved" if session_exists else "✗  No session — log in first",
@@ -739,7 +776,7 @@ class App(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _clear_bs_session(self):
-        session_file = str(_HERE / "session.json")
+        session_file = SESSION_FILE_GUI
         if os.path.exists(session_file):
             os.remove(session_file)
         self._bs_status.configure(text="✗  No session — log in first", text_color="#f0a500")
@@ -880,23 +917,53 @@ class App(ctk.CTk):
     # ── Ask-start-from dialog ─────────────────────────────────────────────────
 
     def _make_ask_fn(self):
-        import tkinter.simpledialog as sd
         result = [1]
         event  = threading.Event()
 
         def ask(total, label):
             def show():
-                self.lift()
-                self.attributes("-topmost", True)
-                self.focus_force()
-                val = sd.askinteger(
-                    "Start from",
-                    f"Found {total} {label}(s).\n\nStart from which number?\n(Leave blank or cancel = start from 1)",
-                    minvalue=1, maxvalue=total, initialvalue=1,
-                )
-                self.attributes("-topmost", False)
-                result[0] = val if val else 1
-                event.set()
+                result[0] = 1
+                dlg = ctk.CTkToplevel(self)
+                dlg.title("Start from")
+                dlg.resizable(False, False)
+                dlg.attributes("-topmost", True)
+                dlg.lift()
+                dlg.focus_force()
+
+                ctk.CTkLabel(
+                    dlg,
+                    text=f"Found {total} {label}(s).\n\nStart from which number?\n(Leave blank or Cancel = start from 1)",
+                    justify="center",
+                ).pack(padx=24, pady=(20, 10))
+
+                entry = ctk.CTkEntry(dlg, width=80, justify="center")
+                entry.insert(0, "1")
+                entry.pack(padx=24, pady=(0, 10))
+                entry.focus_set()
+                entry.select_range(0, "end")
+
+                def ok(_=None):
+                    try:
+                        val = int(entry.get())
+                        if 1 <= val <= total:
+                            result[0] = val
+                    except ValueError:
+                        pass
+                    dlg.destroy()
+                    event.set()
+
+                def cancel():
+                    dlg.destroy()
+                    event.set()
+
+                entry.bind("<Return>", ok)
+                dlg.protocol("WM_DELETE_WINDOW", cancel)
+
+                btn_frame = ctk.CTkFrame(dlg, fg_color="transparent")
+                btn_frame.pack(padx=24, pady=(0, 20))
+                ctk.CTkButton(btn_frame, text="OK", width=80, command=ok).pack(side="left", padx=5)
+                ctk.CTkButton(btn_frame, text="Cancel", width=80, command=cancel, fg_color="gray50").pack(side="left", padx=5)
+
             self.after(0, show)
             event.wait()
             return result[0]
@@ -959,6 +1026,7 @@ class App(ctk.CTk):
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
                                         pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
                 success = True
+                self._append_history(urls, "quiz")
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("quiz", f"✗  {e}"))
@@ -1059,6 +1127,7 @@ class App(ctk.CTk):
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
                                             pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
                 success = True
+                self._append_history(urls, "assignment")
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("assign", f"✗  {e}"))
@@ -1351,7 +1420,7 @@ class App(ctk.CTk):
                 courses  = asyncio.run(scrape())
                 filtered = [c for c in sorted(courses) if should_process(c)]
                 skipped  = len(courses) - len(filtered)
-                with open(str(_HERE / "staging_queue.txt"), "w", encoding="utf-8") as f:
+                with open(STAGING_QUEUE_FILE, "w", encoding="utf-8") as f:
                     for c in filtered:
                         f.write(c + "\n")
                 print(f"\n✓ Queue updated — {len(filtered)} course(s) to stage  ({skipped} skipped)")
@@ -1400,7 +1469,7 @@ class App(ctk.CTk):
         for w in self._queue_done_frame.winfo_children():
             w.destroy()
 
-        queue_file = str(_HERE / "staging_queue.txt")
+        queue_file = STAGING_QUEUE_FILE
         try:
             with open(queue_file, encoding="utf-8") as f:
                 courses = [l.strip() for l in f if l.strip()]
@@ -1464,10 +1533,71 @@ class App(ctk.CTk):
                 text_color="#555577", font=ctk.CTkFont(size=12),
             ).pack(anchor="w", padx=8, pady=10)
 
+    def _load_history_tab(self):
+        if not hasattr(self, "_history_scroll"):
+            return
+        for w in self._history_scroll.winfo_children():
+            w.destroy()
+
+        term = self._history_search.get().strip().lower() if hasattr(self, "_history_search") else ""
+
+        try:
+            with open(COURSE_HISTORY_FILE, encoding="utf-8") as f:
+                entries = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            entries = []
+
+        filtered = [e for e in reversed(entries) if not term or term in e.get("url", "").lower()]
+
+        if not filtered:
+            ctk.CTkLabel(
+                self._history_scroll,
+                text="No history yet." if not term else "No matches.",
+                text_color="#555577", font=ctk.CTkFont(size=12),
+            ).pack(anchor="w", padx=8, pady=10)
+            return
+
+        for entry in filtered:
+            url   = entry.get("url", "")
+            kind  = entry.get("type", "quiz")
+            ts    = entry.get("timestamp", "")[:16].replace("T", " ")
+            icon  = "[Q]" if kind == "quiz" else "[A]"
+            short = url[-72:] if len(url) > 72 else url
+
+            row = ctk.CTkFrame(self._history_scroll, fg_color="#1a1a2e", corner_radius=6)
+            row.pack(fill="x", padx=4, pady=2)
+            row.columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                row, text=f"{icon}  {short}",
+                font=ctk.CTkFont(family="Courier New", size=11),
+                text_color="#8899bb", anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=(8, 4), pady=5)
+            ctk.CTkLabel(
+                row, text=ts,
+                font=ctk.CTkFont(size=10), text_color="#445566", anchor="e",
+            ).grid(row=0, column=1, padx=(0, 8))
+
+    def _append_history(self, urls: list[str], kind: str):
+        from datetime import datetime
+        try:
+            try:
+                with open(COURSE_HISTORY_FILE, encoding="utf-8") as f:
+                    entries = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                entries = []
+            ts = datetime.now().isoformat(timespec="seconds")
+            for url in urls:
+                entries.append({"url": url, "type": kind, "timestamp": ts})
+            with open(COURSE_HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(entries, f, indent=2)
+            self.after(0, self._load_history_tab)
+        except Exception:
+            pass
+
     def _start_staging_step1(self):
         crn = self._staging_crn.get().strip()
         if not crn:
-            queue_file = str(_HERE / "staging_queue.txt")
+            queue_file = STAGING_QUEUE_FILE
             try:
                 with open(queue_file) as f:
                     lines = [l.strip() for l in f if l.strip() and not l.startswith("#")]
