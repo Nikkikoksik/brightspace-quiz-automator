@@ -211,10 +211,16 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
                 tmp_html.write_text(f"<html><body style='font-family:sans-serif;max-width:900px;margin:auto;padding:24px'>{html_result.value}</body></html>", encoding="utf-8")
                 await preview_page.goto(tmp_html.as_uri())
             except Exception:
-                await preview_page.goto(dest.as_uri())
+                await preview_page.close()
+                preview_page = None
+                if sys.platform == "win32":
+                    os.startfile(str(dest))
+                else:
+                    subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(dest)])
 
         confirm = prompt_fn(f'Previewing: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
-        await preview_page.close()
+        if preview_page is not None:
+            await preview_page.close()
 
         if confirm != "y":
             dest.unlink(missing_ok=True)
