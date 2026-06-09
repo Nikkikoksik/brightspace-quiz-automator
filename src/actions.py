@@ -137,13 +137,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                 await timing_btn.click()
                 await page.wait_for_timeout(600)
 
-        # Pre-check: if summary already shows auto-submit, skip the dialog entirely
-        summary_before = await _read_timing_summary(page)
-        if summary_before == "Auto-submit when time is up":
-            print("    Timer     : already auto-submit (summary confirmed) — skipping")
-            return True
-
-        # Wait for Timer Settings to appear — short timeout since panel is already expanded
+        # Wait for Timer Settings link — if absent, quiz has no timer
         try:
             await page.wait_for_selector("text=Timer Settings", timeout=5000)
         except Exception:
@@ -155,6 +149,8 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             print("    Timer     : no timer configured — skipping")
             return
 
+        # Always open the dialog to check the radio directly — the summary text
+        # can show a previous quiz's stale value due to async Lit re-renders
         print("    Timer     : opening Timer Settings...")
         await timer_link.click()
         await page.wait_for_selector(
@@ -167,7 +163,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             print("    Timer     : already auto-submit — skipping")
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(400)
-            return
+            return True
 
         if dry_run:
             print("    Timer     : [DRY RUN] Would select auto-submit")
