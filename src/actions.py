@@ -100,15 +100,17 @@ async def apply_gradebook(page: Page, dry_run: bool):
 
 
 async def _read_timing_summary(page: Page) -> str | None:
-    """Read the timing enforcement text from the quiz edit page summary."""
+    """Read the timing enforcement text from the quiz edit page summary.
+    Looks for div.margin-top-8 whose text is timing-related (submit/enforced/minutes).
+    Walks all shadow roots since the div lives inside the timing panel's shadow DOM.
+    """
     return await page.evaluate("""
         () => {
             function find(root) {
-                for (const el of root.querySelectorAll('d2l-activity-quiz-timing-panel-expanded-summary')) {
-                    if (el.shadowRoot) {
-                        const div = el.shadowRoot.querySelector('div.margin-top-8');
-                        if (div) return div.textContent.trim();
-                    }
+                for (const div of root.querySelectorAll('div.margin-top-8')) {
+                    const t = div.textContent.trim();
+                    if (t && (t.includes('submit') || t.includes('enforced') || t.includes('minutes')))
+                        return t;
                 }
                 for (const el of root.querySelectorAll('*')) {
                     if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
@@ -135,7 +137,33 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         if await timing_btn.count():
             if await timing_btn.get_attribute("aria-expanded") == "false":
                 await timing_btn.click()
-                await page.wait_for_timeout(600)
+
+        # Wait for the timing summary div to render with real content before reading it
+        try:
+            await page.wait_for_function("""
+                () => {
+                    function find(root) {
+                        for (const div of root.querySelectorAll('div.margin-top-8')) {
+                            const t = div.textContent.trim();
+                            if (t && (t.includes('submit') || t.includes('enforced') || t.includes('minutes')))
+                                return true;
+                        }
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.shadowRoot && find(el.shadowRoot)) return true;
+                        }
+                        return false;
+                    }
+                    return find(document);
+                }
+            """, timeout=5000)
+        except Exception:
+            pass
+
+        summary_before = await _read_timing_summary(page)
+        if summary_before == "Auto-submit when time is up":
+            print("    Timer     : already auto-submit (summary confirmed) — skipping")
+            return True
+        print(f"    Timer     : summary = '{summary_before}' — proceeding")
 
         # Wait for Timer Settings link — if absent, quiz has no timer
         try:
@@ -149,8 +177,6 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             print("    Timer     : no timer configured — skipping")
             return
 
-        # Always open the dialog to check the radio directly — the summary text
-        # can show a previous quiz's stale value due to async Lit re-renders
         print("    Timer     : opening Timer Settings...")
         await timer_link.click()
         await page.wait_for_selector(
