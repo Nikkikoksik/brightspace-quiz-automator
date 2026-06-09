@@ -175,26 +175,10 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             await page.wait_for_timeout(400)
             return
 
-        print("    Timer     : clicking radio...")
-        result = await page.evaluate("""
+        # Find radio coordinates for a real pointer-event click
+        print("    Timer     : finding radio button coords...")
+        radio_coords = await page.evaluate("""
             () => {
-                // Find the visible timer dialog by locating a root that has a visible OK footer button
-                function findDialogRoot(root) {
-                    for (const el of root.querySelectorAll('d2l-button[slot="footer"], button[slot="footer"]')) {
-                        if (el.textContent.trim() === 'OK') {
-                            const inner = el.shadowRoot ? el.shadowRoot.querySelector('button') : el;
-                            if (inner && inner.getBoundingClientRect().width > 0) return root;
-                        }
-                    }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) {
-                            const r = findDialogRoot(el.shadowRoot);
-                            if (r) return r;
-                        }
-                    }
-                    return null;
-                }
-
                 function labelOf(el, root) {
                     const p = el.closest('label');
                     if (p) return p.textContent.trim();
@@ -204,60 +188,40 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                     }
                     return el.nextElementSibling?.textContent?.trim() || '';
                 }
-
-                function flashEl(el) {
-                    const orig = el.style.cssText;
-                    el.style.outline = '3px solid #00cc88';
-                    el.style.outlineOffset = '2px';
-                    el.style.boxShadow = '0 0 10px rgba(0,204,136,0.6)';
-                    setTimeout(() => { el.style.cssText = orig; }, 600);
-                }
-
-                function clickRadio(root) {
-                    // Prefer by label text
+                function find(root) {
                     for (const el of root.querySelectorAll('input[type="radio"]')) {
-                        if (labelOf(el, root).toLowerCase().includes('automatically submit')) {
-                            flashEl(el);
-                            el.click();
-                            return { clicked: true, label: labelOf(el, root).slice(0, 60), checked: el.checked };
-                        }
-                    }
-                    // Fall back by value
-                    for (const el of root.querySelectorAll('input[type="radio"]')) {
-                        if (el.value === 'autosubmit') {
-                            flashEl(el);
-                            el.click();
-                            return { clicked: true, label: labelOf(el, root).slice(0, 60), checked: el.checked };
+                        const lbl = labelOf(el, root);
+                        if (lbl.toLowerCase().includes('automatically submit') || el.value === 'autosubmit') {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2, label: lbl };
                         }
                     }
                     for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) {
-                            const r = clickRadio(el.shadowRoot);
-                            if (r) return r;
-                        }
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
                     }
                     return null;
                 }
-
-                const dialogRoot = findDialogRoot(document);
-                if (dialogRoot) {
-                    const r = clickRadio(dialogRoot);
-                    if (r) return r;
-                }
-                return clickRadio(document);
+                return find(document);
             }
         """)
-        if result:
-            print(f"    Timer     : radio '{result.get('label','')}' clicked, checked={result.get('checked')}")
-        else:
-            print("    Timer     : ⚠ autosubmit radio not found via evaluate")
+        if not radio_coords:
+            print("    Timer     : ⚠ autosubmit radio not found — skipping")
             return
-        await page.wait_for_timeout(500)
+        print(f"    Timer     : clicking radio '{radio_coords.get('label', 'autosubmit')}'...")
+        await _flash_click(page, radio_coords["x"], radio_coords["y"])
+        await page.wait_for_timeout(600)
         radio_state = await radio.is_checked()
-        print(f"    Timer     : radio state after click = {radio_state}")
-        print("    Timer     : pressing Enter to confirm...")
-        await page.keyboard.press("Enter")
-        print("    Timer     : Enter pressed — waiting for dialog to close...")
+        print(f"    Timer     : radio checked = {radio_state}")
+
+        # Click the OK button directly by coordinates (more reliable than Enter key)
+        ok_coords = await _find_button_coords(page, "OK")
+        if ok_coords:
+            print(f"    Timer     : clicking OK at ({ok_coords['x']:.0f}, {ok_coords['y']:.0f})...")
+            await _flash_click(page, ok_coords["x"], ok_coords["y"])
+        else:
+            print("    Timer     : OK button not found — pressing Enter as fallback")
+            await page.keyboard.press("Enter")
+        print("    Timer     : waiting for dialog to close...")
 
         try:
             await page.wait_for_function("""
@@ -300,25 +264,33 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                 "input[type='radio'][name='timeLimitOption'][value='autosubmit']",
                 timeout=15000,
             )
-            await page.evaluate("""
+            retry_radio_coords = await page.evaluate("""
                 () => {
-                    function click(root) {
+                    function find(root) {
                         for (const el of root.querySelectorAll('input[type="radio"]')) {
-                            if ((el.value === 'autosubmit') ||
+                            if (el.value === 'autosubmit' ||
                                 (el.closest('label') || {}).textContent?.toLowerCase().includes('automatically submit')) {
-                                el.click(); return true;
+                                const r = el.getBoundingClientRect();
+                                if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
                             }
                         }
                         for (const el of root.querySelectorAll('*')) {
-                            if (el.shadowRoot && click(el.shadowRoot)) return true;
+                            if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
                         }
-                        return false;
+                        return null;
                     }
-                    click(document);
+                    return find(document);
                 }
             """)
-            await page.wait_for_timeout(400)
-            await page.keyboard.press("Enter")
+            if retry_radio_coords:
+                await _flash_click(page, retry_radio_coords["x"], retry_radio_coords["y"])
+            await page.wait_for_timeout(600)
+            retry_ok_coords = await _find_button_coords(page, "OK")
+            if retry_ok_coords:
+                print(f"    Timer     : retry — clicking OK at ({retry_ok_coords['x']:.0f}, {retry_ok_coords['y']:.0f})...")
+                await _flash_click(page, retry_ok_coords["x"], retry_ok_coords["y"])
+            else:
+                await page.keyboard.press("Enter")
             await page.wait_for_timeout(1500)
             try:
                 await page.wait_for_load_state("networkidle", timeout=8000)
