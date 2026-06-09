@@ -489,6 +489,8 @@ class App(ctk.CTk):
             height=38,
         )
         self._staging_crn.pack(fill="x", pady=(0, 10))
+        self._staging_crn.bind("<Return>",   lambda e: self._auto_extract_crn())
+        self._staging_crn.bind("<FocusOut>", lambda e: self._auto_extract_crn())
 
         self._staging_dryrun = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(body, text="Dry run  (navigate only, no changes)",
@@ -1448,6 +1450,22 @@ class App(ctk.CTk):
                 print(f"\n✓ Queue updated — {len(filtered)} course(s) to stage  ({skipped} skipped)")
                 for c in filtered:
                     print(f"   {c}")
+                if skipped:
+                    from staging_scraper import get_dept, TRADES_CODES
+                    import re as _re
+                    print("\nSkipped courses:")
+                    for c in sorted(courses):
+                        if should_process(c):
+                            continue
+                        dept = get_dept(c)
+                        m = _re.search(r'\.(\d+)$', c)
+                        sem = m.group(1) if m else "?"
+                        reasons = []
+                        if dept not in TRADES_CODES:
+                            reasons.append(f"dept '{dept}' not in TRADES_CODES")
+                        if not (sem.endswith("10") or sem.endswith("20") or sem.endswith("30")):
+                            reasons.append(f"semester '{sem}' doesn't end in 10/20/30")
+                        print(f"   {c}  →  {', '.join(reasons) or 'unknown'}")
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("staging", f"✗  {e}"))
@@ -1616,6 +1634,55 @@ class App(ctk.CTk):
         except Exception:
             pass
 
+    def _auto_extract_crn(self, on_done=None):
+        val = self._staging_crn.get().strip()
+        if not val.startswith("http"):
+            return
+        if getattr(self, "_crn_extracting", False):
+            return
+        self._crn_extracting = True
+        q = self._log_queue
+
+        def worker():
+            from playwright.async_api import async_playwright
+            import re as _re
+
+            async def run():
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    context = await browser.new_context(
+                        storage_state=SESSION_FILE_GUI if os.path.exists(SESSION_FILE_GUI) else None
+                    )
+                    page = await context.new_page()
+                    await page.goto(val)
+                    await page.wait_for_load_state("domcontentloaded")
+                    await page.wait_for_timeout(1500)
+                    text = await page.title()
+                    text += " " + await page.evaluate("document.body.innerText")
+                    await browser.close()
+                    return text
+
+            try:
+                text = asyncio.run(run())
+                m = _re.search(r'[A-Z][A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-(\d+)\.\d+', text)
+                if m:
+                    crn = m.group(1)
+                    self.after(0, lambda: (
+                        self._staging_crn.delete(0, "end"),
+                        self._staging_crn.insert(0, crn),
+                    ))
+                    q.put(("staging", f"✓  Extracted CRN: {crn}"))
+                    if on_done:
+                        self.after(100, on_done)
+                else:
+                    q.put(("staging", "⚠  Could not find a course code on that page."))
+            except Exception as e:
+                q.put(("staging", f"✗  {e}"))
+            finally:
+                self._crn_extracting = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _start_staging_step1(self):
         crn = self._staging_crn.get().strip()
         if not crn:
@@ -1664,6 +1731,10 @@ class App(ctk.CTk):
         crn = self._staging_crn.get().strip()
         if not crn:
             self._append(self._staging_log, "⚠  Enter a CRN or URL, or click a course from the list above.")
+            return
+        if crn.startswith("http"):
+            self._append(self._staging_log, "⏳  Extracting CRN from URL…")
+            self._auto_extract_crn(on_done=self._start_staging_steps_1_2)
             return
 
         self._staging_steps12_btn.configure(state="disabled", text="Running…")

@@ -141,7 +141,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         summary_before = await _read_timing_summary(page)
         if summary_before == "Auto-submit when time is up":
             print("    Timer     : already auto-submit (summary confirmed) — skipping")
-            return
+            return True
 
         # Wait for Timer Settings to appear — short timeout since panel is already expanded
         try:
@@ -277,6 +277,48 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         print("    Timer     : network idle ✓")
         summary_after = await _read_timing_summary(page)
         print(f"    Timer     : summary after OK = '{summary_after}'")
+
+        if summary_after == "Auto-submit when time is up":
+            return True
+
+        if True:
+            print("    Timer     : ⚠ summary did not update — retrying once...")
+            await timer_link.click()
+            await page.wait_for_selector(
+                "input[type='radio'][name='timeLimitOption'][value='autosubmit']",
+                timeout=15000,
+            )
+            await page.evaluate("""
+                () => {
+                    function click(root) {
+                        for (const el of root.querySelectorAll('input[type="radio"]')) {
+                            if ((el.value === 'autosubmit') ||
+                                (el.closest('label') || {}).textContent?.toLowerCase().includes('automatically submit')) {
+                                el.click(); return true;
+                            }
+                        }
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.shadowRoot && click(el.shadowRoot)) return true;
+                        }
+                        return false;
+                    }
+                    click(document);
+                }
+            """)
+            await page.wait_for_timeout(400)
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(1500)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+            summary_retry = await _read_timing_summary(page)
+            if summary_retry == "Auto-submit when time is up":
+                print("    Timer     : ✓ retry succeeded")
+                return True
+            else:
+                print(f"    Timer     : ✗ FAILED — still '{summary_retry}' after retry")
+                return False
 
     except Exception as e:
         print(f"    Timer     : ✗ {e}")
