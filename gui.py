@@ -1711,7 +1711,11 @@ class App(ctk.CTk):
                         self.after(100, on_done)
                 else:
                     self._crn_last_failed_url = val
-                    q.put(("staging", "⚠  Could not find a course code on that page."))
+                    import re as _re2
+                    if _re2.search(r'/d2l/home/\d+', val):
+                        q.put(("staging", "ℹ  No CRN on this page — URL will be used directly."))
+                    else:
+                        q.put(("staging", "⚠  Could not find a course code on that page."))
             except Exception as e:
                 q.put(("staging", f"✗  {e}"))
             finally:
