@@ -567,28 +567,27 @@ async def save_assignment(page: Page, dry_run: bool):
         print("    Save      : [DRY RUN] Would click Save and Close")
         return
     try:
-        coords = await page.evaluate("""
-            () => {
-                function find(root) {
-                    for (const el of root.querySelectorAll('button, d2l-button')) {
-                        const t = el.textContent.trim();
-                        if (t === 'Save and Close' || t === 'Save') {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-                        }
-                    }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
-                    }
-                    return null;
-                }
-                return find(document);
-            }
-        """)
-        if not coords:
-            raise Exception("Save button not found in shadow DOM")
-        await page.mouse.click(coords["x"], coords["y"])
-        await page.wait_for_load_state("domcontentloaded", timeout=8000)
-        print("    Save      : ✓")
+        save_coords = await _find_button_coords(page, "Save")
+        if save_coords:
+            print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
+            await _flash_click(page, save_coords["x"], save_coords["y"])
+            await page.wait_for_timeout(1500)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(800)
+            print("    Save      : Save clicked ✓")
+        else:
+            print("    Save      : ⚠ Save button not found — skipping intermediate save")
+
+        sac_coords = await _find_button_coords(page, "Save and Close")
+        if not sac_coords:
+            raise Exception("Save and Close button not found")
+        print(f"    Save      : clicking Save and Close at ({sac_coords['x']}, {sac_coords['y']})...")
+        await _flash_click(page, sac_coords["x"], sac_coords["y"])
+        print("    Save      : clicked — waiting for navigation...")
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+        print(f"    Save      : ✓  (landed on {page.url[-60:]})")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
