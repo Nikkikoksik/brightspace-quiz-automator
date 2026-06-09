@@ -9,8 +9,13 @@ from playwright.async_api import async_playwright
 from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200
 from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary
 
-SESSION_FILE = str(Path(os.environ["APPDATA"]) / "BrightspaceAutomator" / "session.json")
-STATS_FILE   = str(Path(os.environ["APPDATA"]) / "BrightspaceAutomator" / "timing_stats.json")
+if os.name == "nt":
+    _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
+else:
+    _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
+
+SESSION_FILE = str(_USERDATA_DIR / "session.json")
+STATS_FILE   = str(_USERDATA_DIR / "timing_stats.json")
 
 
 def _save_timing(course_url: str, quiz_name: str, elapsed_s: float):
