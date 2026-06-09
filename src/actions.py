@@ -205,10 +205,19 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                     return el.nextElementSibling?.textContent?.trim() || '';
                 }
 
+                function flashEl(el) {
+                    const orig = el.style.cssText;
+                    el.style.outline = '3px solid #00cc88';
+                    el.style.outlineOffset = '2px';
+                    el.style.boxShadow = '0 0 10px rgba(0,204,136,0.6)';
+                    setTimeout(() => { el.style.cssText = orig; }, 600);
+                }
+
                 function clickRadio(root) {
                     // Prefer by label text
                     for (const el of root.querySelectorAll('input[type="radio"]')) {
                         if (labelOf(el, root).toLowerCase().includes('automatically submit')) {
+                            flashEl(el);
                             el.click();
                             return { clicked: true, label: labelOf(el, root).slice(0, 60), checked: el.checked };
                         }
@@ -216,6 +225,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                     // Fall back by value
                     for (const el of root.querySelectorAll('input[type="radio"]')) {
                         if (el.value === 'autosubmit') {
+                            flashEl(el);
                             el.click();
                             return { clicked: true, label: labelOf(el, root).slice(0, 60), checked: el.checked };
                         }
@@ -354,6 +364,23 @@ async def _find_button_coords(page: Page, exact_text: str):
     """, exact_text)
 
 
+async def _flash_click(page: Page, x: float, y: float):
+    """Highlight the element at (x, y) green, pause briefly, then click."""
+    await page.evaluate("""
+        ([x, y]) => {
+            const el = document.elementFromPoint(x, y);
+            if (!el) return;
+            const orig = el.style.cssText;
+            el.style.outline = '3px solid #00cc88';
+            el.style.outlineOffset = '2px';
+            el.style.boxShadow = '0 0 10px rgba(0,204,136,0.6)';
+            setTimeout(() => { el.style.cssText = orig; }, 600);
+        }
+    """, [x, y])
+    await page.wait_for_timeout(200)
+    await page.mouse.click(x, y)
+
+
 async def save_quiz(page: Page, dry_run: bool):
     """Click Save (commits changes), then Save and Close (exits editor)."""
     if dry_run:
@@ -363,7 +390,7 @@ async def save_quiz(page: Page, dry_run: bool):
         save_coords = await _find_button_coords(page, "Save")
         if save_coords:
             print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
-            await page.mouse.click(save_coords["x"], save_coords["y"])
+            await _flash_click(page, save_coords["x"], save_coords["y"])
             await page.wait_for_timeout(1500)
             try:
                 await page.wait_for_load_state("networkidle", timeout=8000)
@@ -378,7 +405,7 @@ async def save_quiz(page: Page, dry_run: bool):
         if not sac_coords:
             raise Exception("Save and Close button not found")
         print(f"    Save      : clicking Save and Close at ({sac_coords['x']}, {sac_coords['y']})...")
-        await page.mouse.click(sac_coords["x"], sac_coords["y"])
+        await _flash_click(page, sac_coords["x"], sac_coords["y"])
         print("    Save      : clicked — waiting for navigation...")
         await page.wait_for_load_state("domcontentloaded", timeout=12000)
         print(f"    Save      : ✓  (landed on {page.url[-60:]})")
@@ -452,7 +479,7 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
             return
 
         print("    Gradebook : Not in Grade Book → switching...")
-        await page.mouse.click(info["x"], info["y"])
+        await _flash_click(page, info["x"], info["y"])
         await page.wait_for_timeout(600)
 
         option = await page.evaluate("""
@@ -477,7 +504,7 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
         if not option:
             raise Exception("'Add to Grade Book' menu item not found after clicking grade button")
 
-        await page.mouse.click(option["x"], option["y"])
+        await _flash_click(page, option["x"], option["y"])
         await page.wait_for_timeout(800)
         await _set_points_if_zero(page)
         print("    Gradebook : ✓ Added to Grade Book")
