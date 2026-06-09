@@ -17,7 +17,10 @@ ctk.set_default_color_theme("blue")
 VERSION = "v0.8.0"
 
 _HERE        = Path(__file__).parent
-USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
+if os.name == "nt":
+    USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
+else:
+    USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
 USERDATA_DIR.mkdir(parents=True, exist_ok=True)
 
 COURSES_FILE        = str(USERDATA_DIR / "courses.txt")
@@ -1662,7 +1665,7 @@ class App(ctk.CTk):
                     await page.wait_for_load_state("domcontentloaded")
                     await page.wait_for_timeout(1500)
 
-                    # For /d2l/home/{id} URLs, try the LP API — it returns the full course code as JSON
+                    # For /d2l/home/{id} URLs, try the LP API — returns full course code as JSON
                     home_m = _re.search(r'/d2l/home/(\d+)', val)
                     if home_m:
                         from urllib.parse import urlparse
@@ -1765,6 +1768,12 @@ class App(ctk.CTk):
         if not crn:
             self._append(self._staging_log, "⚠  Enter a CRN or URL, or click a course from the list above.")
             return
+<<<<<<< HEAD
+=======
+        if crn.startswith("http") and not __import__("re").search(r'/d2l/home/\d+', crn):
+            self._append(self._staging_log, "⚠  URL is missing the course ID — use the full URL, e.g. https://learn.okanagancollege.ca/d2l/home/12345")
+            return
+>>>>>>> dev
         self._staging_steps12_btn.configure(state="disabled", text="Running…")
         self._staging_log.configure(state="normal")
         self._staging_log.delete("1.0", "end")

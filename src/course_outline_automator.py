@@ -102,13 +102,16 @@ async def _wait_for_bs_login(page, context):
         await page.wait_for_timeout(3000)
         url = page.url
         if "learn.okanagancollege.ca" in url and "microsoftonline.com" not in url:
+            has_login_form = await page.evaluate("() => !!document.querySelector('#userName')")
+            if has_login_form:
+                continue
             try:
                 await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home", timeout=15000)
                 await page.wait_for_load_state("domcontentloaded", timeout=10000)
                 await page.wait_for_timeout(2000)
             except Exception:
                 pass
-            if "learn.okanagancollege.ca" in page.url and "microsoftonline.com" not in page.url:
+            if "/d2l/home" in page.url:
                 break
         if i % 10 == 0 and i > 0:
             print(f"  Still waiting... ({i * 3}s)  |  {page.url[:80]}")
@@ -207,7 +210,7 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
                 tmp_html = download_dir / f"{dest.stem}_preview.html"
                 tmp_html.write_text(f"<html><body style='font-family:sans-serif;max-width:900px;margin:auto;padding:24px'>{html_result.value}</body></html>", encoding="utf-8")
                 await preview_page.goto(tmp_html.as_uri())
-            except ImportError:
+            except Exception:
                 await preview_page.goto(dest.as_uri())
 
         confirm = prompt_fn(f'Previewing: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
@@ -297,8 +300,8 @@ async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=i
 # ── File utilities ─────────────────────────────────────────────────────────────
 
 def ensure_extension(path: Path) -> Path:
-    """Detect file type from magic bytes and add .pdf / .docx if missing."""
-    if path.suffix.lower() in (".pdf", ".docx", ".doc"):
+    """Detect file type from magic bytes and add .pdf / .docx / .rtf if missing."""
+    if path.suffix.lower() in (".pdf", ".docx", ".doc", ".rtf"):
         return path
     with open(path, "rb") as f:
         header = f.read(8)
@@ -306,6 +309,8 @@ def ensure_extension(path: Path) -> Path:
         new_path = path.with_suffix(".pdf")
     elif header.startswith(b"PK"):
         new_path = path.with_suffix(".docx")
+    elif header.startswith(b"{\\rt"):
+        new_path = path.with_suffix(".rtf")
     else:
         print(f"  ⚠ Unknown file type ({header[:4].hex()}) — keeping as-is")
         return path
@@ -611,14 +616,41 @@ async def _resolve_course_id(page, course_url: str) -> str:
     return course_id
 
 
+def _convert_rtf_to_docx(rtf_path: Path) -> Path:
+    """Convert RTF to DOCX using pypandoc (auto-installs pypandoc and Pandoc if missing)."""
+    try:
+        import pypandoc
+    except ImportError:
+        print("  Installing pypandoc...")
+        os.system(f"{sys.executable} -m pip install pypandoc")
+        import pypandoc
+
+    try:
+        pypandoc.get_pandoc_version()
+    except OSError:
+        print("  Pandoc not found — downloading and installing Pandoc (one-time, ~30 MB)...")
+        pypandoc.download_pandoc()
+        print("  ✓ Pandoc installed")
+
+    docx_path = rtf_path.with_suffix(".docx")
+    print("  Converting RTF → docx...")
+    pypandoc.convert_file(str(rtf_path), "docx", outputfile=str(docx_path))
+    print(f"  ✓ Converted: {docx_path.name}")
+    return docx_path
+
+
 async def _convert_outline(page, course_id: str, prompt_fn, email: str, password: str) -> str | None:
     """Steps 1-3: download outline, convert if needed, run CourseBridge. Returns HTML or None if skipped."""
     file_path = await find_and_download_outline(page, course_id=course_id, prompt_fn=prompt_fn)
     if file_path is None:
         return None
-    if file_path.suffix.lower() == ".pdf":
+    suffix = file_path.suffix.lower()
+    if suffix == ".pdf":
         print("\nStep 2 — PDF detected, converting...")
         file_path = convert_pdf_to_docx(file_path)
+    elif suffix == ".rtf":
+        print("\nStep 2 — RTF detected, converting...")
+        file_path = _convert_rtf_to_docx(file_path)
     else:
         print(f"\nStep 2 — {file_path.suffix} file, no conversion needed")
     return await convert_with_coursebridge(file_path, email=email, password=password)
