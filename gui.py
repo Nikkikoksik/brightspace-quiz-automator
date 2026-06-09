@@ -17,7 +17,10 @@ ctk.set_default_color_theme("blue")
 VERSION = "v0.8.0"
 
 _HERE        = Path(__file__).parent
-USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
+if os.name == "nt":
+    USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
+else:
+    USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
 USERDATA_DIR.mkdir(parents=True, exist_ok=True)
 
 COURSES_FILE        = str(USERDATA_DIR / "courses.txt")
