@@ -270,10 +270,12 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             print("    Timer     : ⚠ dialog did not close after 10s — OK click may have missed")
 
         print("    Timer     : waiting for API to settle...")
+        await page.wait_for_timeout(1000)
         try:
-            await page.wait_for_load_state("networkidle", timeout=8000)
+            await page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
             pass
+        await page.wait_for_timeout(800)
         print("    Timer     : network idle ✓")
         summary_after = await _read_timing_summary(page)
         print(f"    Timer     : summary after OK = '{summary_after}'")
@@ -362,11 +364,12 @@ async def save_quiz(page: Page, dry_run: bool):
         if save_coords:
             print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
             await page.mouse.click(save_coords["x"], save_coords["y"])
-            await page.wait_for_timeout(800)
+            await page.wait_for_timeout(1500)
             try:
-                await page.wait_for_load_state("networkidle", timeout=5000)
+                await page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
+            await page.wait_for_timeout(800)
             print("    Save      : Save clicked ✓")
         else:
             print("    Save      : ⚠ Save button not found — skipping intermediate save")
@@ -377,7 +380,7 @@ async def save_quiz(page: Page, dry_run: bool):
         print(f"    Save      : clicking Save and Close at ({sac_coords['x']}, {sac_coords['y']})...")
         await page.mouse.click(sac_coords["x"], sac_coords["y"])
         print("    Save      : clicked — waiting for navigation...")
-        await page.wait_for_load_state("domcontentloaded", timeout=8000)
+        await page.wait_for_load_state("domcontentloaded", timeout=12000)
         print(f"    Save      : ✓  (landed on {page.url[-60:]})")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
