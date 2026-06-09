@@ -1643,12 +1643,16 @@ class App(ctk.CTk):
             return
         if getattr(self, "_crn_extracting", False):
             return
+        # Don't retry a URL that already failed (unless explicitly triggered by a button)
+        if not on_done and val == getattr(self, "_crn_last_failed_url", None):
+            return
         self._crn_extracting = True
         q = self._log_queue
 
         def worker():
             from playwright.async_api import async_playwright
             import re as _re
+            import json as _json
 
             async def run():
                 async with async_playwright() as p:
@@ -1660,6 +1664,33 @@ class App(ctk.CTk):
                     await page.goto(val)
                     await page.wait_for_load_state("domcontentloaded")
                     await page.wait_for_timeout(1500)
+
+                    # For /d2l/home/{id} URLs, try the LP API — returns full course code as JSON
+                    home_m = _re.search(r'/d2l/home/(\d+)', val)
+                    if home_m:
+                        from urllib.parse import urlparse
+                        parsed = urlparse(val)
+                        base = f"{parsed.scheme}://{parsed.netloc}"
+                        org_id = home_m.group(1)
+                        api_url = f"{base}/d2l/api/lp/1.9/courses/{org_id}"
+                        try:
+                            resp = await page.evaluate(f"""
+                                async () => {{
+                                    const r = await fetch('{api_url}');
+                                    if (r.ok) return await r.text();
+                                    return null;
+                                }}
+                            """)
+                            if resp:
+                                data = _json.loads(resp)
+                                code = data.get("Code", "")
+                                if code:
+                                    await browser.close()
+                                    return code
+                        except Exception:
+                            pass
+
+                    # Fall back: search the visible page text
                     text = await page.title()
                     text += " " + await page.evaluate("document.body.innerText")
                     await browser.close()
@@ -1670,6 +1701,7 @@ class App(ctk.CTk):
                 m = _re.search(r'[A-Z][A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-(\d+)\.\d+', text)
                 if m:
                     crn = m.group(1)
+                    self._crn_last_failed_url = None
                     self.after(0, lambda: (
                         self._staging_crn.delete(0, "end"),
                         self._staging_crn.insert(0, crn),
@@ -1678,6 +1710,7 @@ class App(ctk.CTk):
                     if on_done:
                         self.after(100, on_done)
                 else:
+                    self._crn_last_failed_url = val
                     q.put(("staging", "⚠  Could not find a course code on that page."))
             except Exception as e:
                 q.put(("staging", f"✗  {e}"))
@@ -1735,11 +1768,9 @@ class App(ctk.CTk):
         if not crn:
             self._append(self._staging_log, "⚠  Enter a CRN or URL, or click a course from the list above.")
             return
-        if crn.startswith("http"):
-            self._append(self._staging_log, "⏳  Extracting CRN from URL…")
-            self._auto_extract_crn(on_done=self._start_staging_steps_1_2)
+        if crn.startswith("http") and not __import__("re").search(r'/d2l/home/\d+', crn):
+            self._append(self._staging_log, "⚠  URL is missing the course ID — use the full URL, e.g. https://learn.okanagancollege.ca/d2l/home/12345")
             return
-
         self._staging_steps12_btn.configure(state="disabled", text="Running…")
         self._staging_log.configure(state="normal")
         self._staging_log.delete("1.0", "end")

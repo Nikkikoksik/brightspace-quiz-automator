@@ -41,6 +41,11 @@ async def _resolve_ou(page, course_input: str) -> tuple[str | None, str | None]:
         print(f"  URL detected — OU: {ou}")
         return None, ou
 
+    # If it looks like a URL but has no course ID, give a clear error
+    if course_input.startswith("http"):
+        print(f"✗ URL is missing a course ID — expected format: https://learn.okanagancollege.ca/d2l/home/12345")
+        return None, None
+
     # CRN or full course code — find the staging shell
     crn = extract_crn(course_input) if "." in course_input else course_input
     if not crn:

@@ -3,4 +3,5 @@ customtkinter
 watchdog
 pdf2docx
 mammoth
+pypandoc
 sentry-sdk
