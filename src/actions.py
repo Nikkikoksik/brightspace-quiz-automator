@@ -133,38 +133,6 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         except Exception:
             pass
 
-        timing_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Timing")
-        if await timing_btn.count():
-            if await timing_btn.get_attribute("aria-expanded") == "false":
-                await timing_btn.click()
-
-        # Wait for the timing summary div to render with real content before reading it
-        try:
-            await page.wait_for_function("""
-                () => {
-                    function find(root) {
-                        for (const div of root.querySelectorAll('div.margin-top-8')) {
-                            const t = div.textContent.trim();
-                            if (t && (t.includes('submit') || t.includes('enforced') || t.includes('minutes')))
-                                return true;
-                        }
-                        for (const el of root.querySelectorAll('*')) {
-                            if (el.shadowRoot && find(el.shadowRoot)) return true;
-                        }
-                        return false;
-                    }
-                    return find(document);
-                }
-            """, timeout=5000)
-        except Exception:
-            pass
-
-        summary_before = await _read_timing_summary(page)
-        if summary_before == "Auto-submit when time is up":
-            print("    Timer     : already auto-submit (summary confirmed) — skipping")
-            return True
-        print(f"    Timer     : summary = '{summary_before}' — proceeding")
-
         # Wait for Timer Settings link — if absent, quiz has no timer
         try:
             await page.wait_for_selector("text=Timer Settings", timeout=5000)
@@ -234,6 +202,24 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         await page.wait_for_timeout(600)
         radio_state = await radio.is_checked()
         print(f"    Timer     : radio checked = {radio_state}")
+
+        if not radio_state:
+            # Coordinate click missed — fall back to Playwright locator click
+            print("    Timer     : coord click missed — trying locator click...")
+            try:
+                await radio.scroll_into_view_if_needed()
+                await radio.click()
+                await page.wait_for_timeout(400)
+                radio_state = await radio.is_checked()
+                print(f"    Timer     : radio checked (locator) = {radio_state}")
+            except Exception as e:
+                print(f"    Timer     : locator click failed: {e}")
+
+        if not radio_state:
+            print("    Timer     : ⚠ could not check radio — escaping dialog")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+            return False
 
         # Click the OK button directly by coordinates (more reliable than Enter key)
         ok_coords = await _find_button_coords(page, "OK")
@@ -307,6 +293,22 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             if retry_radio_coords:
                 await _flash_click(page, retry_radio_coords["x"], retry_radio_coords["y"])
             await page.wait_for_timeout(600)
+            retry_radio_state = await radio.is_checked()
+            if not retry_radio_state:
+                print("    Timer     : retry coord click missed — trying locator click...")
+                try:
+                    await radio.scroll_into_view_if_needed()
+                    await radio.click()
+                    await page.wait_for_timeout(400)
+                    retry_radio_state = await radio.is_checked()
+                    print(f"    Timer     : retry radio checked (locator) = {retry_radio_state}")
+                except Exception as e:
+                    print(f"    Timer     : retry locator click failed: {e}")
+            if not retry_radio_state:
+                print("    Timer     : ⚠ retry could not check radio — escaping")
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(400)
+                return False
             retry_ok_coords = await _find_button_coords(page, "OK")
             if retry_ok_coords:
                 print(f"    Timer     : retry — clicking OK at ({retry_ok_coords['x']:.0f}, {retry_ok_coords['y']:.0f})...")
