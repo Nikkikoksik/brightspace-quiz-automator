@@ -1772,12 +1772,9 @@ class App(ctk.CTk):
         if not crn:
             self._append(self._staging_log, "⚠  Enter a CRN or URL, or click a course from the list above.")
             return
-<<<<<<< HEAD
-=======
         if crn.startswith("http") and not __import__("re").search(r'/d2l/home/\d+', crn):
             self._append(self._staging_log, "⚠  URL is missing the course ID — use the full URL, e.g. https://learn.okanagancollege.ca/d2l/home/12345")
             return
->>>>>>> dev
         self._staging_steps12_btn.configure(state="disabled", text="Running…")
         self._staging_log.configure(state="normal")
         self._staging_log.delete("1.0", "end")
