@@ -489,6 +489,8 @@ class App(ctk.CTk):
             height=38,
         )
         self._staging_crn.pack(fill="x", pady=(0, 10))
+        self._staging_crn.bind("<Return>",   lambda e: self._auto_extract_crn())
+        self._staging_crn.bind("<FocusOut>", lambda e: self._auto_extract_crn())
 
         self._staging_dryrun = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(body, text="Dry run  (navigate only, no changes)",
@@ -1448,6 +1450,22 @@ class App(ctk.CTk):
                 print(f"\n✓ Queue updated — {len(filtered)} course(s) to stage  ({skipped} skipped)")
                 for c in filtered:
                     print(f"   {c}")
+                if skipped:
+                    from staging_scraper import get_dept, TRADES_CODES
+                    import re as _re
+                    print("\nSkipped courses:")
+                    for c in sorted(courses):
+                        if should_process(c):
+                            continue
+                        dept = get_dept(c)
+                        m = _re.search(r'\.(\d+)$', c)
+                        sem = m.group(1) if m else "?"
+                        reasons = []
+                        if dept not in TRADES_CODES:
+                            reasons.append(f"dept '{dept}' not in TRADES_CODES")
+                        if not (sem.endswith("10") or sem.endswith("20") or sem.endswith("30")):
+                            reasons.append(f"semester '{sem}' doesn't end in 10/20/30")
+                        print(f"   {c}  →  {', '.join(reasons) or 'unknown'}")
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("staging", f"✗  {e}"))
@@ -1616,6 +1634,88 @@ class App(ctk.CTk):
         except Exception:
             pass
 
+    def _auto_extract_crn(self, on_done=None):
+        val = self._staging_crn.get().strip()
+        if not val.startswith("http"):
+            return
+        if getattr(self, "_crn_extracting", False):
+            return
+        # Don't retry a URL that already failed (unless explicitly triggered by a button)
+        if not on_done and val == getattr(self, "_crn_last_failed_url", None):
+            return
+        self._crn_extracting = True
+        q = self._log_queue
+
+        def worker():
+            from playwright.async_api import async_playwright
+            import re as _re
+            import json as _json
+
+            async def run():
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    context = await browser.new_context(
+                        storage_state=SESSION_FILE_GUI if os.path.exists(SESSION_FILE_GUI) else None
+                    )
+                    page = await context.new_page()
+                    await page.goto(val)
+                    await page.wait_for_load_state("domcontentloaded")
+                    await page.wait_for_timeout(1500)
+
+                    # For /d2l/home/{id} URLs, try the LP API — it returns the full course code as JSON
+                    home_m = _re.search(r'/d2l/home/(\d+)', val)
+                    if home_m:
+                        from urllib.parse import urlparse
+                        parsed = urlparse(val)
+                        base = f"{parsed.scheme}://{parsed.netloc}"
+                        org_id = home_m.group(1)
+                        api_url = f"{base}/d2l/api/lp/1.9/courses/{org_id}"
+                        try:
+                            resp = await page.evaluate(f"""
+                                async () => {{
+                                    const r = await fetch('{api_url}');
+                                    if (r.ok) return await r.text();
+                                    return null;
+                                }}
+                            """)
+                            if resp:
+                                data = _json.loads(resp)
+                                code = data.get("Code", "")
+                                if code:
+                                    await browser.close()
+                                    return code
+                        except Exception:
+                            pass
+
+                    # Fall back: search the visible page text
+                    text = await page.title()
+                    text += " " + await page.evaluate("document.body.innerText")
+                    await browser.close()
+                    return text
+
+            try:
+                text = asyncio.run(run())
+                m = _re.search(r'[A-Z][A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-(\d+)\.\d+', text)
+                if m:
+                    crn = m.group(1)
+                    self._crn_last_failed_url = None
+                    self.after(0, lambda: (
+                        self._staging_crn.delete(0, "end"),
+                        self._staging_crn.insert(0, crn),
+                    ))
+                    q.put(("staging", f"✓  Extracted CRN: {crn}"))
+                    if on_done:
+                        self.after(100, on_done)
+                else:
+                    self._crn_last_failed_url = val
+                    q.put(("staging", "⚠  Could not find a course code on that page."))
+            except Exception as e:
+                q.put(("staging", f"✗  {e}"))
+            finally:
+                self._crn_extracting = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _start_staging_step1(self):
         crn = self._staging_crn.get().strip()
         if not crn:
@@ -1665,7 +1765,6 @@ class App(ctk.CTk):
         if not crn:
             self._append(self._staging_log, "⚠  Enter a CRN or URL, or click a course from the list above.")
             return
-
         self._staging_steps12_btn.configure(state="disabled", text="Running…")
         self._staging_log.configure(state="normal")
         self._staging_log.delete("1.0", "end")

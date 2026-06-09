@@ -1,12 +1,36 @@
 import asyncio
+import json
 import os
+import time
+from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
 
 from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200
-from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings
+from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary
 
 SESSION_FILE = str(Path(os.environ["APPDATA"]) / "BrightspaceAutomator" / "session.json")
+STATS_FILE   = str(Path(os.environ["APPDATA"]) / "BrightspaceAutomator" / "timing_stats.json")
+
+
+def _save_timing(course_url: str, quiz_name: str, elapsed_s: float):
+    try:
+        try:
+            with open(STATS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            data = []
+        data.append({
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "time": datetime.now().strftime("%H:%M"),
+            "course": course_url,
+            "quiz": quiz_name,
+            "seconds": round(elapsed_s, 1),
+        })
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
 
 
 async def _wait_for_login(page, context):
@@ -106,8 +130,11 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             else:
                 print(f"Found {total} quiz(es). Starting...")
 
+            failed_timer = []
             for i, name in enumerate(names, start_from):
                 print(f"\n[{i}/{total}]  [{name}]")
+                t_start = time.time()
+                quiz_failed = False
                 try:
                     await page.goto(quiz_url, wait_until="commit")
                 except Exception:
@@ -119,10 +146,35 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                 if settings.get("set_in_gradebook"):
                     await apply_gradebook(page, dry_run)
                 if settings.get("set_auto_submit"):
-                    await apply_auto_submit(page, dry_run)
+                    ok = await apply_auto_submit(page, dry_run)
+                    if ok is False:
+                        quiz_failed = True
+                        if pause_fn:
+                            print(f"\n    ⚠ Timer fix failed — fix it manually in the browser above,")
+                            print(f"       then click Continue. The run will re-check and move on.")
+                            pause_fn()
+                            summary = await _read_timing_summary(page)
+                            if summary is not None and summary != "Auto-submit when time is up":
+                                print(f"    Timer     : ✗ still not fixed — moving on")
+                                failed_timer.append(f"[{i}/{total}] {name}")
+                            else:
+                                print("    Timer     : ✓ resuming")
+                                quiz_failed = False
+                        else:
+                            failed_timer.append(f"[{i}/{total}] {name}")
                 await save_quiz(page, dry_run)
+                elapsed = time.time() - t_start
+                if not quiz_failed and not dry_run:
+                    _save_timing(quiz_url, name, elapsed)
+                    print(f"    Timing    : {elapsed:.1f}s")
                 if pause_fn:
                     pause_fn()
+
+            if failed_timer:
+                print(f"\n{'─' * 50}")
+                print(f"⚠  {len(failed_timer)} quiz(es) need manual timer fix:")
+                for q in failed_timer:
+                    print(f"   • {q}")
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
@@ -237,8 +289,11 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
             else:
                 print(f"Found {total} quiz(es). Starting timer fix...")
 
+            failed_timer = []
             for i, name in enumerate(names, start_from):
                 print(f"\n[{i}/{total}]  [{name}]")
+                t_start = time.time()
+                quiz_failed = False
                 try:
                     await page.goto(course_url, wait_until="commit")
                 except Exception:
@@ -247,10 +302,35 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
                     "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
                 )
                 await open_quiz_edit(page, name)
-                await apply_auto_submit(page, dry_run)
+                ok = await apply_auto_submit(page, dry_run)
+                if ok is False:
+                    quiz_failed = True
+                    if pause_fn:
+                        print(f"\n    ⚠ Timer fix failed — fix it manually in the browser above,")
+                        print(f"       then click Continue. The run will re-check and move on.")
+                        pause_fn()
+                        summary = await _read_timing_summary(page)
+                        if summary is not None and summary != "Auto-submit when time is up":
+                            print(f"    Timer     : ✗ still not fixed — moving on")
+                            failed_timer.append(f"[{i}/{total}] {name}")
+                        else:
+                            print("    Timer     : ✓ resuming")
+                            quiz_failed = False
+                    else:
+                        failed_timer.append(f"[{i}/{total}] {name}")
                 await save_quiz(page, dry_run)
+                elapsed = time.time() - t_start
+                if not quiz_failed and not dry_run:
+                    _save_timing(course_url, name, elapsed)
+                    print(f"    Timing    : {elapsed:.1f}s")
                 if pause_fn:
                     pause_fn()
+
+            if failed_timer:
+                print(f"\n{'─' * 50}")
+                print(f"⚠  {len(failed_timer)} quiz(es) need manual timer fix:")
+                for q in failed_timer:
+                    print(f"   • {q}")
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")

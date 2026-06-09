@@ -48,24 +48,27 @@ git push origin nick --force-with-lease # push your rebased nick to GitHub (--fo
 ## Git — Committing and Pushing to Dev
 
 ```powershell
-git add .
-git commit -m "describe what you changed"
-git push origin nick
-git switch dev
-git merge nick --no-edit
-git push origin dev
-git switch nick
+git add .                               # stage all changed files
+git commit -m "describe what you changed" # save a snapshot with a message
+git push origin nick                    # upload your nick branch to GitHub
+git switch dev                          # move to the dev branch
+git merge nick --no-edit               # merge your changes into dev (--no-edit skips the vim prompt)
+git push origin dev                     # upload the updated dev to GitHub
+git switch nick                         # move back to your working branch
 ```
 > The `--no-edit` flag stops vim from opening during the merge — always include it.
 
 ---
 
-## Git — Committing and Pushing to Dev
+## Git — Promoting Dev to Main (release)
 
 ```powershell
-git merge dev
-git push origin main
+git switch main                         # move to the main branch
+git merge dev --no-edit                 # merge the latest dev into main
+git push origin main                    # upload main to GitHub (safe — no force)
+git switch nick                         # move back to your working branch
 ```
+> Run this when dev is stable and you want to publish a release. Always do the "Committing and Pushing to Dev" block first.
 
 ## Git — See Recent Commits
 

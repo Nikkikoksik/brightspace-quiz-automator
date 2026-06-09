@@ -71,7 +71,7 @@ async def scrape() -> list[str]:
         return []
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=60)
+        browser = await p.chromium.launch(headless=False)
         context = await browser.new_context(
             storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None
         )
@@ -107,17 +107,42 @@ async def scrape() -> list[str]:
         await ready_tab.click()
         await page.wait_for_timeout(2000)
 
-        # Scrape course codes — regex match against all visible text
-        print("Scraping course list...")
-        course_codes = await page.evaluate("""
-            () => {
-                // Match codes like BOOK-110-MAR-80147.202611
-                const pattern = /[A-Z][A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-[0-9]+\\.[0-9]+/g;
-                const text = document.body.innerText || '';
-                const matches = text.match(pattern) || [];
-                return [...new Set(matches)];
-            }
-        """)
+        # Clear any active search/filter left over from a previous session
+        search_inputs = await page.locator("input[type='search'], input[placeholder*='earch'], input[placeholder*='ilter']").all()
+        for inp in search_inputs:
+            if await inp.is_visible():
+                await inp.click(click_count=3)
+                await inp.press("Delete")
+                await inp.press("Escape")
+        if search_inputs:
+            await page.wait_for_timeout(800)
+
+        # Find the search input on the staging tab
+        search_input = page.locator(
+            "input[type='search'], input[placeholder*='earch'], input[placeholder*='ilter'], input[placeholder*='course']"
+        ).first
+
+        # Search each trades dept code and scrape results — avoids infinite scroll entirely
+        print(f"Searching {len(TRADES_CODES)} department codes…")
+        all_codes: set[str] = set()
+        for dept in sorted(TRADES_CODES):
+            await search_input.click(click_count=3)
+            await search_input.type(dept, delay=50)
+            await page.wait_for_timeout(800)
+            new_codes = await page.evaluate("""
+                () => {
+                    const pattern = /[A-Z][A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-[0-9]+\\.[0-9]+/g;
+                    return [...new Set(document.body.innerText.match(pattern) || [])];
+                }
+            """)
+            before = len(all_codes)
+            all_codes.update(new_codes)
+            found = len(all_codes) - before
+            if found:
+                print(f"  {dept}: +{found} course(s)")
+
+        print(f"Scraping complete — {len(all_codes)} total trades courses found")
+        course_codes = list(all_codes)
 
         await context.storage_state(path=CB_SESSION_FILE)
         await browser.close()
