@@ -599,9 +599,17 @@ class App(ctk.CTk):
             fg_color=_BTN_PRIMARY, hover_color=_BTN_PRIMARY_H,
             command=self._start_staging_steps_1_2,
         )
-        self._staging_steps12_btn.pack(fill="x", pady=(0, 16))
+        self._staging_steps12_btn.pack(fill="x", pady=(0, 8))
 
-        self._staging_log = self._log_box(body, height=320)
+        self._mark_ready_btn = ctk.CTkButton(
+            body, text="✔  Mark as Ready  (_Staged → _Ready)", height=38,
+            font=ctk.CTkFont(size=13),
+            fg_color=_BTN_MUTED, hover_color=_BTN_MUTED_H,
+            command=self._start_mark_ready,
+        )
+        self._mark_ready_btn.pack(fill="x", pady=(0, 16))
+
+        self._staging_log = self._log_box(body, height=300)
 
     # ── Queue panel ───────────────────────────────────────────────────────────
 
@@ -1153,7 +1161,8 @@ class App(ctk.CTk):
                 _sentry_context("quizzes", urls[0] if urls else "")
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
-                                        pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
+                                        pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn,
+                                        rename_fn=self._popup_yesno))
                 success = True
                 self._append_history(urls, "quiz")
             except Exception as e:
@@ -1254,7 +1263,8 @@ class App(ctk.CTk):
                 _sentry_context("assignments", urls[0] if urls else "")
                 from browser import run_assignments
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
-                                            pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn))
+                                            pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn,
+                                            rename_fn=self._popup_yesno))
                 success = True
                 self._append_history(urls, "assignment")
             except Exception as e:
@@ -1355,7 +1365,8 @@ class App(ctk.CTk):
             try:
                 from browser import run_assignments
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
-                                            pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn2))
+                                            pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn2,
+                                            rename_fn=self._popup_yesno))
                 success = True
             except Exception as e:
                 _sentry_capture(e)
@@ -1417,7 +1428,8 @@ class App(ctk.CTk):
                 _sentry_context("quizzes", urls[0] if urls else "")
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
-                                        pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn3))
+                                        pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn3,
+                                        rename_fn=self._popup_yesno))
                 success = True
             except Exception as e:
                 _sentry_capture(e)
@@ -1501,6 +1513,7 @@ class App(ctk.CTk):
                     email=email,
                     password=password,
                     prompt_fn=prompter,
+                    rename_fn=self._popup_yesno,
                 ))
             except Exception as e:
                 _sentry_capture(e)
@@ -1916,6 +1929,51 @@ class App(ctk.CTk):
             finally:
                 sys.stdout = old
                 q.put(("staging", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _start_mark_ready(self):
+        crn = self._staging_crn.get().strip()
+        if not crn:
+            self._append(self._staging_log, "⚠  Enter a CRN or URL first.")
+            return
+        self._mark_ready_btn.configure(state="disabled", text="Running…")
+        self._staging_log.configure(state="normal")
+        self._staging_log.delete("1.0", "end")
+        self._staging_log.configure(state="disabled")
+        dry_run = self._staging_dryrun.get()
+        q = self._log_queue
+        resume = self._resume_event
+
+        def pause_fn():
+            resume.clear()
+            self.after(0, lambda: self._mark_ready_btn.configure(
+                state="normal", text="Continue", command=lambda: resume.set()
+            ))
+            resume.wait()
+            self.after(0, lambda: self._mark_ready_btn.configure(
+                text="✔  Mark as Ready  (_Staged → _Ready)",
+                command=self._start_mark_ready,
+            ))
+
+        def worker():
+            from staging_automator import run_mark_ready
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("staging", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                asyncio.run(run_mark_ready(crn, dry_run=dry_run, pause_fn=pause_fn))
+            except Exception as e:
+                _sentry_capture(e)
+                q.put(("staging", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                self.after(0, lambda: self._mark_ready_btn.configure(
+                    state="normal", text="✔  Mark as Ready  (_Staged → _Ready)",
+                    command=self._start_mark_ready,
+                ))
 
         threading.Thread(target=worker, daemon=True).start()
 

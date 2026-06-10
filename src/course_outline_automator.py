@@ -683,7 +683,7 @@ async def _convert_outline(page, course_id: str, prompt_fn, email: str, password
 
 # ── Main orchestrator ──────────────────────────────────────────────────────────
 
-async def run(dry_run: bool = False, course_url: str = "", email: str = "", password: str = "", prompt_fn=input):
+async def run(dry_run: bool = False, course_url: str = "", email: str = "", password: str = "", prompt_fn=input, rename_fn=None):
     _course_url = course_url or COURSE_URL
     _email      = email or COURSEBRIDGE_EMAIL
     _password   = password or COURSEBRIDGE_PASSWORD
@@ -730,6 +730,9 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
         await page.wait_for_timeout(2000)
         await paste_html_to_syllabus(page, html, course_id=course_id)
         print("\n✓ All done!")
+        if rename_fn:
+            from staging_automator import maybe_rename_staged
+            await maybe_rename_staged(page, rename_fn)
         await browser.close()
 
 
