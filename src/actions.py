@@ -265,7 +265,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         if summary_after == "Auto-submit when time is up":
             return True
 
-        if True:
+        if summary_after != "Auto-submit when time is up":
             print("    Timer     : ⚠ summary did not update — retrying once...")
             await timer_link.click()
             await page.wait_for_selector(
