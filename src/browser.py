@@ -104,7 +104,7 @@ async def run_bs_login():
         await browser.close()
 
 
-async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None, review_fn=None, rename_fn=None):
+async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
         context = await browser.new_context(
@@ -174,27 +174,13 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                     ok = await apply_auto_submit(page, dry_run)
                     if ok is False:
                         quiz_failed = True
-                        if pause_fn:
-                            print(f"\n    ⚠ Timer fix failed — fix it manually in the browser above,")
-                            print(f"       then click Continue. The run will re-check and move on.")
-                            pause_fn()
-                            summary = await _read_timing_summary(page)
-                            if summary is not None and summary != "Auto-submit when time is up":
-                                print(f"    Timer     : ✗ still not fixed — moving on")
-                                failed_timer.append(f"[{i}/{total}] {name}")
-                            else:
-                                print("    Timer     : ✓ resuming")
-                                quiz_failed = False
-                        else:
-                            failed_timer.append(f"[{i}/{total}] {name}")
+                        failed_timer.append(f"[{i}/{total}] {name}")
                 await save_quiz(page, dry_run)
                 elapsed = time.time() - t_start
                 results.append({"name": name, "elapsed": elapsed, "failed": quiz_failed})
                 if not quiz_failed and not dry_run:
                     _save_timing(quiz_url, name, elapsed)
                     print(f"    Timing    : {elapsed:.1f}s")
-                if pause_fn:
-                    pause_fn()
 
             if failed_timer:
                 print(f"\n{'─' * 50}")
@@ -279,7 +265,7 @@ async def run_verify(urls: list[str]):
         await browser.close()
 
 
-async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=None, limit: int | None = None):
+async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, limit: int | None = None):
     """Re-run only the auto-submit timer fix on quizzes (no gradebook)."""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
@@ -337,26 +323,12 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
                 ok = await apply_auto_submit(page, dry_run)
                 if ok is False:
                     quiz_failed = True
-                    if pause_fn:
-                        print(f"\n    ⚠ Timer fix failed — fix it manually in the browser above,")
-                        print(f"       then click Continue. The run will re-check and move on.")
-                        pause_fn()
-                        summary = await _read_timing_summary(page)
-                        if summary is not None and summary != "Auto-submit when time is up":
-                            print(f"    Timer     : ✗ still not fixed — moving on")
-                            failed_timer.append(f"[{i}/{total}] {name}")
-                        else:
-                            print("    Timer     : ✓ resuming")
-                            quiz_failed = False
-                    else:
-                        failed_timer.append(f"[{i}/{total}] {name}")
+                    failed_timer.append(f"[{i}/{total}] {name}")
                 await save_quiz(page, dry_run)
                 elapsed = time.time() - t_start
                 if not quiz_failed and not dry_run:
                     _save_timing(course_url, name, elapsed)
                     print(f"    Timing    : {elapsed:.1f}s")
-                if pause_fn:
-                    pause_fn()
 
             if failed_timer:
                 print(f"\n{'─' * 50}")
@@ -369,7 +341,7 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, pause_fn=No
         await browser.close()
 
 
-async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, pause_fn=None, ask_fn=None, review_fn=None, rename_fn=None):
+async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None):
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False, slow_mo=80,
@@ -447,8 +419,6 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 elapsed = time.time() - t_start
                 results.append({"name": name, "elapsed": elapsed, "failed": False})
                 print(f"    Timing    : {elapsed:.1f}s")
-                if pause_fn:
-                    pause_fn()
 
             if results:
                 _print_run_summary(results, "assignment")
