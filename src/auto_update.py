@@ -104,6 +104,10 @@ def cleanup():
 
 
 def main():
+    if (HERE / ".git").exists():
+        print("Git checkout detected — skipping auto-update (use git pull instead)")
+        return
+
     print("Checking for updates...")
     remote_sha = get_remote_sha()
 
