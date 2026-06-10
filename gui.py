@@ -609,6 +609,14 @@ class App(ctk.CTk):
         body = self._panel_body(parent, "Staging Queue",
                                 "Track which courses have been staged")
 
+        # ── Filter field ───────────────────────────────────────────────────────
+        self._section_label(body, "FILTER  (optional — comma-separated, e.g.  202531, D11)")
+        self._staging_filter = ctk.CTkEntry(
+            body, placeholder_text="Leave blank to include all trades courses",
+            height=34,
+        )
+        self._staging_filter.pack(fill="x", pady=(0, 8))
+
         # ── Top row: refresh + status ──────────────────────────────────────────
         top = ctk.CTkFrame(body, fg_color="transparent")
         top.pack(fill="x", pady=(0, 10))
@@ -1556,31 +1564,28 @@ class App(ctk.CTk):
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
             try:
-                courses  = asyncio.run(scrape())
-                filtered = [c for c in sorted(courses) if should_process(c)]
-                skipped  = len(courses) - len(filtered)
+                patterns = [p.strip() for p in self._staging_filter.get().split(",") if p.strip()]
+                courses  = asyncio.run(scrape(search_terms=patterns if patterns else None))
+                if patterns:
+                    # Custom search — skip trades filter, preserve site order
+                    filtered = list(courses)
+                else:
+                    # Default — apply trades + semester filter as before
+                    filtered = [c for c in courses if should_process(c)]
+                content = "\n".join(filtered) + "\n" if filtered else ""
                 with open(STAGING_QUEUE_FILE, "w", encoding="utf-8") as f:
-                    for c in filtered:
-                        f.write(c + "\n")
-                print(f"\n✓ Queue updated — {len(filtered)} course(s) to stage  ({skipped} skipped)")
+                    f.write(content)
+                with open(_HERE / "staging_queue.txt", "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"\n{'─' * 50}")
+                print(f"✓  Pulled {len(filtered)} course(s) → saved to staging_queue.txt")
+                print(f"{'─' * 50}")
                 for c in filtered:
                     print(f"   {c}")
-                if skipped:
-                    from staging_scraper import get_dept, TRADES_CODES
-                    import re as _re
-                    print("\nSkipped courses:")
-                    for c in sorted(courses):
-                        if should_process(c):
-                            continue
-                        dept = get_dept(c)
-                        m = _re.search(r'\.(\d+)$', c)
-                        sem = m.group(1) if m else "?"
-                        reasons = []
-                        if dept not in TRADES_CODES:
-                            reasons.append(f"dept '{dept}' not in TRADES_CODES")
-                        if not (sem.endswith("10") or sem.endswith("20") or sem.endswith("30")):
-                            reasons.append(f"semester '{sem}' doesn't end in 10/20/30")
-                        print(f"   {c}  →  {', '.join(reasons) or 'unknown'}")
+                if not patterns:
+                    skipped = [c for c in sorted(courses) if not should_process(c)]
+                    if skipped:
+                        print(f"\n  ({len(skipped)} non-trades courses skipped)")
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("staging", f"✗  {e}"))

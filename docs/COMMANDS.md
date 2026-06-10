@@ -55,11 +55,12 @@ git add gui.py  # only add what is in the list
 
 git commit -m "describe what you changed" # save a snapshot with a message
 
-git push origin nick                    # "send my local nick branch up to GitHub"
+git push origin nick --force-with-lease   # "send my local nick branch up to GitHub"
 # origin — the name for your GitHub repo (it's just an alias git sets up automatically when you clone)
 
 #nick — which branch to push
 git switch dev                          # move to the dev branch
+
 git merge nick --no-edit               # merge your changes into dev (--no-edit skips the vim prompt)
 git push origin dev                     # upload the updated dev to GitHub
 git switch nick                         # move back to your working branch
@@ -72,6 +73,9 @@ git switch nick                         # move back to your working branch
 
 ```powershell
 git switch main                         # move to the main branch
+
+git pull # git switch main opens your local copy, git pull refreshes it from GitHub before you write to it.
+
 git merge dev --no-edit                 # merge the latest dev into main
 git push origin main                    # upload main to GitHub (safe — no force)
 git switch nick                         # move back to your working branch
