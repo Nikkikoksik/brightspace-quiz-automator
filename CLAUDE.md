@@ -80,7 +80,7 @@ For confirming a dialog closed, use the same recursive walk in
 ## CourseBridge Selectors (from live HTML)
 CourseBridge is a Next.js/React app — no shadow DOM, standard selectors work fine.
 
-- **File upload:** `input[accept=".pdf,.doc,.docx"]` — use `set_input_files()` directly on the hidden input, no clicking needed
+- **File upload:** `input[type='file']` with `state="attached"` (input is hidden, so never use default visible wait). Current accept value: `.pdf,.docx,.pptx,.txt,.md,.markdown,.text,.html,.htm,.csv,.tsv,.rtf,.json` — use `set_input_files()` directly, no clicking needed
 - **Template dropdown:** `button[data-slot="select-trigger"]` — defaults to "Course Syllabus", verify before clicking Convert
 - **Convert button:** `button:has-text("Convert Document")`
 - **Wait for completion:** poll status log `div.font-mono` for text containing "Done!"
