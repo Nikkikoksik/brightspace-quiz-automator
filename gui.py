@@ -11,6 +11,11 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import customtkinter as ctk
 
+try:
+    from CTkMessagebox import CTkMessagebox
+except ImportError:
+    CTkMessagebox = None  # fall back to native messagebox until setup.bat is re-run
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -49,18 +54,43 @@ def _migrate_userdata():
 
 _migrate_userdata()
 
-_SIDEBAR_BG    = "#141414"
-_NAV_HOVER     = "#222222"
-_BTN_PRIMARY   = "#0e4d4d"
-_BTN_PRIMARY_H = "#166060"
-_BTN_MUTED     = "#252525"
-_BTN_MUTED_H   = "#343434"
-_BTN_DANGER    = "#4a1a1a"
-_BTN_DANGER_H  = "#631f1f"
-_BTN_ADD       = "#1a3d1a"
-_BTN_ADD_H     = "#245224"
-_DIVIDER       = "#2a2a2a"
-_NAV_ACTIVE = "#2e2e52"
+_BG            = "#0f0f14"   # main window background
+_SIDEBAR_BG    = "#0a0a0f"
+_CARD          = "#17171f"   # settings / input card background
+_NAV_HOVER     = "#16161e"
+_NAV_ACTIVE    = "#1c2735"
+_ACCENT        = "#0d9488"   # single teal accent used app-wide
+_ACCENT_H      = "#14b8a6"
+_BTN_PRIMARY   = _ACCENT
+_BTN_PRIMARY_H = _ACCENT_H
+_BTN_MUTED     = "#1e1e28"
+_BTN_MUTED_H   = "#2a2a38"
+_BTN_DANGER    = "#3f1717"
+_BTN_DANGER_H  = "#5a2020"
+_BTN_ADD       = "#16382a"
+_BTN_ADD_H     = "#1e5038"
+_DIVIDER       = "#222230"
+_TEXT_DIM      = "#9aa0b8"   # nav idle, subtitles
+_TEXT_FAINT    = "#5d6378"   # section labels, hints
+_LOG_BG        = "#0b0b10"
+_LOG_BORDER    = "#1c1c26"
+
+# Apply the palette to CustomTkinter's defaults so every default-styled
+# widget (buttons, checkboxes, entries, tabs, dialogs) matches the accent.
+ctk.ThemeManager.theme["CTk"]["fg_color"]        = ["#f3f3f6", _BG]
+ctk.ThemeManager.theme["CTkToplevel"]["fg_color"] = ["#f3f3f6", _BG]
+ctk.ThemeManager.theme["CTkFrame"]["fg_color"]    = ["#ebebec", _CARD]
+ctk.ThemeManager.theme["CTkFrame"]["top_fg_color"] = ["#dbdbdc", "#1e1e28"]
+ctk.ThemeManager.theme["CTkButton"]["fg_color"]      = [_ACCENT, _ACCENT]
+ctk.ThemeManager.theme["CTkButton"]["hover_color"]   = [_ACCENT_H, _ACCENT_H]
+ctk.ThemeManager.theme["CTkButton"]["corner_radius"] = 8
+ctk.ThemeManager.theme["CTkCheckBox"]["fg_color"]    = [_ACCENT, _ACCENT]
+ctk.ThemeManager.theme["CTkCheckBox"]["hover_color"] = [_ACCENT_H, _ACCENT_H]
+ctk.ThemeManager.theme["CTkEntry"]["fg_color"]       = ["#f9f9fa", "#101016"]
+ctk.ThemeManager.theme["CTkEntry"]["border_color"]   = ["#979da2", "#2a2a38"]
+ctk.ThemeManager.theme["CTkTextbox"]["fg_color"]     = ["#f9f9fa", "#101016"]
+ctk.ThemeManager.theme["CTkSegmentedButton"]["selected_color"]       = [_ACCENT, _ACCENT]
+ctk.ThemeManager.theme["CTkSegmentedButton"]["selected_hover_color"] = [_ACCENT_H, _ACCENT_H]
 
 
 _DEFAULT_SENTRY_DSN = "https://b178c330abfc081169e6395ae85da7db@o4511530722459648.ingest.de.sentry.io/4511530734780496"
@@ -165,10 +195,10 @@ class App(ctk.CTk):
         hdr = ctk.CTkFrame(parent, fg_color="transparent")
         hdr.pack(fill="x", padx=28, pady=(24, 0))
         ctk.CTkLabel(hdr, text=title,
-                     font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+                     font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w")
         if subtitle:
             ctk.CTkLabel(hdr, text=subtitle,
-                         font=ctk.CTkFont(size=12), text_color="#7777aa").pack(anchor="w", pady=(3, 0))
+                         font=ctk.CTkFont(size=12), text_color=_TEXT_DIM).pack(anchor="w", pady=(3, 0))
         ctk.CTkFrame(parent, height=1, fg_color=_DIVIDER).pack(fill="x", padx=28, pady=(14, 0))
         body = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=24, pady=(8, 12))
@@ -177,16 +207,16 @@ class App(ctk.CTk):
     def _section_label(self, parent, text: str):
         ctk.CTkLabel(parent, text=text,
                      font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color="#555577").pack(anchor="w", pady=(14, 3))
+                     text_color=_TEXT_FAINT).pack(anchor="w", pady=(14, 3))
 
     def _log_box(self, parent, height: int) -> ctk.CTkTextbox:
         """Styled log output area with a subtle border."""
-        border = ctk.CTkFrame(parent, fg_color="#1c1c1c", corner_radius=8)
+        border = ctk.CTkFrame(parent, fg_color=_LOG_BORDER, corner_radius=8)
         border.pack(fill="x", pady=(10, 0))
         box = ctk.CTkTextbox(
             border, height=height, state="disabled",
-            font=ctk.CTkFont(family="Courier New", size=12),
-            fg_color="#111111", corner_radius=6,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            fg_color=_LOG_BG, corner_radius=6, text_color="#b8c4da",
             border_width=0,
         )
         box.pack(fill="x", padx=2, pady=2)
@@ -206,7 +236,7 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(
             sidebar, text="Brightspace\nAutomator",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(size=17, weight="bold"),
             text_color="white", justify="left",
         ).grid(row=0, column=0, sticky="w", padx=20, pady=(28, 20))
 
@@ -222,7 +252,7 @@ class App(ctk.CTk):
             btn = ctk.CTkButton(
                 sidebar, text=label, anchor="w", height=40,
                 fg_color="transparent", hover_color=_NAV_HOVER,
-                text_color="#aaaacc", font=ctk.CTkFont(size=13),
+                text_color=_TEXT_DIM, font=ctk.CTkFont(size=13),
                 corner_radius=6,
                 command=lambda k=key: self._show_panel(k),
             )
@@ -234,13 +264,13 @@ class App(ctk.CTk):
         )
         ctk.CTkLabel(
             sidebar, text="  OPTIONAL",
-            font=ctk.CTkFont(size=10), text_color="#555577",
+            font=ctk.CTkFont(size=10), text_color=_TEXT_FAINT,
         ).grid(row=7, column=0, sticky="w", padx=8, pady=(2, 0))
         for r, (key, label) in enumerate([("Timer Fix", "  Timer Fix"), ("Queue", "  Queue"), ("History", "  History")], start=8):
             btn = ctk.CTkButton(
                 sidebar, text=label, anchor="w", height=40,
                 fg_color="transparent", hover_color=_NAV_HOVER,
-                text_color="#aaaacc", font=ctk.CTkFont(size=13),
+                text_color=_TEXT_DIM, font=ctk.CTkFont(size=13),
                 corner_radius=6,
                 command=lambda k=key: self._show_panel(k),
             )
@@ -254,7 +284,7 @@ class App(ctk.CTk):
         settings_btn = ctk.CTkButton(
             sidebar, text=f"  Settings  {VERSION}", anchor="w", height=40,
             fg_color="transparent", hover_color=_NAV_HOVER,
-            text_color="#aaaacc", font=ctk.CTkFont(size=13),
+            text_color=_TEXT_DIM, font=ctk.CTkFont(size=13),
             corner_radius=6,
             command=lambda: self._show_panel("Settings"),
         )
@@ -296,7 +326,7 @@ class App(ctk.CTk):
             if key == name:
                 btn.configure(fg_color=_NAV_ACTIVE, text_color="white")
             else:
-                btn.configure(fg_color="transparent", text_color="#aaaacc")
+                btn.configure(fg_color="transparent", text_color=_TEXT_DIM)
         if name == "History":
             self.after(10, self._load_history_tab)
 
@@ -529,7 +559,7 @@ class App(ctk.CTk):
         self._staging_refresh_btn.grid(row=0, column=0, sticky="ew", padx=(0, 8))
 
         self._queue_status_label = ctk.CTkLabel(
-            body, text="", font=ctk.CTkFont(size=12), text_color="#7777aa",
+            body, text="", font=ctk.CTkFont(size=12), text_color=_TEXT_DIM,
         )
         self._queue_status_label.pack(anchor="w", pady=(0, 6))
 
@@ -613,7 +643,7 @@ class App(ctk.CTk):
         ).pack(side="left")
 
         self._notes_box = ctk.CTkTextbox(
-            body, font=ctk.CTkFont(family="Courier New", size=12),
+            body, font=ctk.CTkFont(family="Consolas", size=12),
         )
         self._notes_box.pack(fill="both", expand=True)
         self._notes_box.bind("<KeyRelease>", lambda e: self._save_notes())
@@ -1029,7 +1059,7 @@ class App(ctk.CTk):
 
         def review_fn():
             def show():
-                messagebox.showinfo(
+                self._popup_info(
                     "Quizzes Complete",
                     "All quizzes processed.\n\n"
                     "Review the browser for any errors, then click OK to close it.",
@@ -1130,7 +1160,7 @@ class App(ctk.CTk):
 
         def review_fn():
             def show():
-                messagebox.showinfo(
+                self._popup_info(
                     "Assignments Complete",
                     "All assignments processed.\n\n"
                     "Review the browser for any errors, then click OK to close it.",
@@ -1170,10 +1200,26 @@ class App(ctk.CTk):
             self._resume_event.set()
             self._assign_pause_btn.configure(text="⏸   PAUSE", fg_color="#555555")
 
+    # ── Themed popups (fall back to native messagebox if package missing) ─────
+
+    def _popup_info(self, title: str, message: str):
+        if CTkMessagebox:
+            CTkMessagebox(master=self, title=title, message=message,
+                          icon="check").get()
+        else:
+            messagebox.showinfo(title, message)
+
+    def _popup_yesno(self, title: str, message: str) -> bool:
+        if CTkMessagebox:
+            box = CTkMessagebox(master=self, title=title, message=message,
+                                icon="question", option_1="No", option_2="Yes")
+            return box.get() == "Yes"
+        return messagebox.askyesno(title, message)
+
     # ── Post-run review prompts ───────────────────────────────────────────────
 
     def _post_quiz_review(self):
-        if messagebox.askyesno(
+        if self._popup_yesno(
             "Run Assignments?",
             "Would you also like to run the Assignment Automator\n"
             "for the same course(s)?",
@@ -1181,7 +1227,7 @@ class App(ctk.CTk):
             self._run_assignments_for(self._last_quiz_urls)
 
     def _post_assign_review(self):
-        if messagebox.askyesno(
+        if self._popup_yesno(
             "Run Quizzes?",
             "Would you also like to run the Quiz Automator\n"
             "for the same course(s)?",
@@ -1216,7 +1262,7 @@ class App(ctk.CTk):
 
         def review_fn2():
             def show():
-                messagebox.showinfo(
+                self._popup_info(
                     "All Done!",
                     "Quizzes and assignments are both complete.\n\n"
                     "Review the browser for any errors, then click OK to close it.",
@@ -1277,7 +1323,7 @@ class App(ctk.CTk):
 
         def review_fn3():
             def show():
-                messagebox.showinfo(
+                self._popup_info(
                     "All Done!",
                     "Assignments and quizzes are both complete.\n\n"
                     "Review the browser for any errors, then click OK to close it.",
@@ -1539,7 +1585,7 @@ class App(ctk.CTk):
             ctk.CTkButton(
                 row, text=f"  {course}",
                 height=30,
-                font=ctk.CTkFont(family="Courier New", size=12),
+                font=ctk.CTkFont(family="Consolas", size=12),
                 fg_color="#1c1c2e" if not is_done else "#141a14",
                 hover_color="#22334a" if not is_done else "#1a2a1a",
                 text_color="#b0b8cc" if not is_done else "#4a7a4a",
@@ -1563,7 +1609,7 @@ class App(ctk.CTk):
             ctk.CTkLabel(
                 self._queue_todo_frame,
                 text="Nothing left to do!" if courses else "No courses yet — click Refresh or add one above",
-                text_color="#555577", font=ctk.CTkFont(size=12),
+                text_color=_TEXT_FAINT, font=ctk.CTkFont(size=12),
             ).pack(anchor="w", padx=8, pady=10)
 
         if completed:
@@ -1573,7 +1619,7 @@ class App(ctk.CTk):
             ctk.CTkLabel(
                 self._queue_done_frame,
                 text="No completed courses yet.",
-                text_color="#555577", font=ctk.CTkFont(size=12),
+                text_color=_TEXT_FAINT, font=ctk.CTkFont(size=12),
             ).pack(anchor="w", padx=8, pady=10)
 
     def _load_history_tab(self):
@@ -1596,7 +1642,7 @@ class App(ctk.CTk):
             ctk.CTkLabel(
                 self._history_scroll,
                 text="No history yet." if not term else "No matches.",
-                text_color="#555577", font=ctk.CTkFont(size=12),
+                text_color=_TEXT_FAINT, font=ctk.CTkFont(size=12),
             ).pack(anchor="w", padx=8, pady=10)
             return
 
@@ -1607,12 +1653,12 @@ class App(ctk.CTk):
             icon  = "[Q]" if kind == "quiz" else "[A]"
             short = url[-72:] if len(url) > 72 else url
 
-            row = ctk.CTkFrame(self._history_scroll, fg_color="#1a1a2e", corner_radius=6)
+            row = ctk.CTkFrame(self._history_scroll, fg_color=_CARD, corner_radius=6)
             row.pack(fill="x", padx=4, pady=2)
             row.columnconfigure(0, weight=1)
             ctk.CTkLabel(
                 row, text=f"{icon}  {short}",
-                font=ctk.CTkFont(family="Courier New", size=11),
+                font=ctk.CTkFont(family="Consolas", size=11),
                 text_color="#8899bb", anchor="w",
             ).grid(row=0, column=0, sticky="ew", padx=(8, 4), pady=5)
             ctk.CTkLabel(
