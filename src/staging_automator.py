@@ -145,6 +145,143 @@ async def hide_blueprint_module(page, dry_run: bool = False) -> bool:
     return True
 
 
+async def maybe_rename_staged(page, popup_fn) -> bool:
+    """
+    Check if the currently open Brightspace course is _Staged.
+    If so, ask via popup_fn and rename _Staged → _Ready if confirmed.
+    Returns True if renamed, False otherwise. Safe to call on any page.
+    """
+    try:
+        nav = page.locator("a.d2l-navigation-s-link").first
+        if not await nav.count():
+            return False
+        title = await nav.get_attribute("title") or ""
+        href  = await nav.get_attribute("href")  or ""
+        if "_Staged" not in title:
+            return False
+
+        new_title = title.replace("_Staged", "_Ready")
+        m = re.search(r'/d2l/home/(\d+)', href)
+        if not m:
+            print("  ⚠ Could not extract OU from nav link — skipping rename")
+            return False
+        ou = m.group(1)
+
+        import threading
+        result = [False]
+        event  = threading.Event()
+        def ask():
+            result[0] = popup_fn(
+                "Mark as Ready?",
+                f"Rename this course from:\n\n  {title}\n\nto:\n\n  {new_title}?"
+            )
+            event.set()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: (ask(), event.wait()))
+        if not result[0]:
+            print("  Skipping rename — user declined")
+            return False
+
+        print(f"  Renaming {title} → {new_title}...")
+        settings_url = f"{BS_BASE}/d2l/lms/coursesettings/main_frame.d2l?ou={ou}"
+        await page.goto(settings_url)
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(2000)
+
+        name_field = page.locator("input[name='courseOffName']")
+        code_field = page.locator("input[name='courseOffCode']")
+        name_val = await name_field.input_value()
+        code_val = await code_field.input_value()
+
+        await name_field.triple_click()
+        await name_field.fill(name_val.replace("_Staged", "_Ready"))
+        await code_field.triple_click()
+        await code_field.fill(code_val.replace("_Staged", "_Ready"))
+
+        await page.locator("button.d2l-button[primary]").first.click()
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(1000)
+        print("  ✓ Renamed to _Ready")
+        return True
+
+    except Exception as e:
+        print(f"  ⚠ Rename check failed: {e}")
+        return False
+
+
+async def run_mark_ready(course_input: str, dry_run: bool = False, pause_fn=None):
+    """
+    Find the _Staged shell for the given CRN/URL and rename _Staged → _Ready
+    in both Course Offering Name and Code fields, then save.
+    Skips silently if already _Ready. Leaves the browser open for verification.
+    """
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
+        context = await browser.new_context(
+            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+            no_viewport=True,
+        )
+        page = await context.new_page()
+        await _wait_for_login(page, context)
+
+        crn, ou = await _resolve_ou(page, course_input)
+        if not ou:
+            await browser.close()
+            return
+
+        settings_url = f"{BS_BASE}/d2l/lms/coursesettings/main_frame.d2l?ou={ou}"
+        print(f"  Navigating to Course Offering Information...")
+        await page.goto(settings_url)
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(2000)
+
+        name_field = page.locator("input[name='courseOffName']")
+        code_field = page.locator("input[name='courseOffCode']")
+        name_val = await name_field.input_value()
+        code_val = await code_field.input_value()
+        print(f"  Name : {name_val}")
+        print(f"  Code : {code_val}")
+
+        if "_Ready" in name_val and "_Ready" in code_val:
+            print("  ✓ Already marked as Ready — nothing to do")
+            if pause_fn:
+                pause_fn()
+            await browser.close()
+            return
+
+        if "_Staged" not in name_val and "_Staged" not in code_val:
+            print("  ⚠ Neither _Staged nor _Ready found — check the course manually")
+            if pause_fn:
+                pause_fn()
+            await browser.close()
+            return
+
+        new_name = name_val.replace("_Staged", "_Ready")
+        new_code = code_val.replace("_Staged", "_Ready")
+        print(f"  Renaming to:")
+        print(f"    Name : {new_name}")
+        print(f"    Code : {new_code}")
+
+        if dry_run:
+            print("  [DRY RUN] Would save — skipping")
+            await browser.close()
+            return
+
+        await name_field.triple_click()
+        await name_field.fill(new_name)
+        await code_field.triple_click()
+        await code_field.fill(new_code)
+
+        await page.locator("button.d2l-button[primary]").first.click()
+        await page.wait_for_load_state("domcontentloaded")
+        await page.wait_for_timeout(1000)
+        print("  ✓ Saved — review in the browser above, then click Continue")
+
+        if pause_fn:
+            pause_fn()
+        await browser.close()
+
+
 async def run_step1(course_input: str, dry_run: bool = False):
     """
     Step 1: Find the staging shell for a CRN, URL, or full course code and hide the blueprint module.

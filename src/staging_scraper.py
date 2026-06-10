@@ -63,7 +63,7 @@ def sort_key(course_code: str) -> tuple:
     return (0 if semester == "202530" else 1, course_code)
 
 
-async def scrape() -> list[str]:
+async def scrape(search_terms: list[str] | None = None) -> list[str]:
     email, password = load_credentials()
     if not email or not password:
         print("✗ CourseBridge credentials not found.")
@@ -122,27 +122,51 @@ async def scrape() -> list[str]:
             "input[type='search'], input[placeholder*='earch'], input[placeholder*='ilter'], input[placeholder*='course']"
         ).first
 
-        # Search each trades dept code and scrape results — avoids infinite scroll entirely
-        print(f"Searching {len(TRADES_CODES)} department codes…")
-        all_codes: set[str] = set()
-        for dept in sorted(TRADES_CODES):
+        # Use provided search terms if given, otherwise fall back to dept codes
+        terms = search_terms if search_terms else sorted(TRADES_CODES)
+        print(f"Searching {len(terms)} term(s): {terms if len(terms) <= 5 else str(terms[:5])[:-1] + ', …]'}")
+        all_codes: dict[str, None] = {}  # dict preserves insertion order, deduplicates
+        for term in terms:
             await search_input.click(click_count=3)
-            await search_input.type(dept, delay=50)
-            await page.wait_for_timeout(800)
-            new_codes = await page.evaluate("""
-                () => {
-                    const pattern = /[A-Z][A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-[0-9]+\\.[0-9]+/g;
-                    return [...new Set(document.body.innerText.match(pattern) || [])];
-                }
-            """)
+            await search_input.type(term, delay=50)
+            await page.wait_for_timeout(1000)
+
+            # Scroll to load all results (virtual scroll renders rows lazily)
+            seen: dict[str, None] = {}
+            stale = 0
+            while stale < 2:
+                batch = await page.evaluate("""
+                    () => {
+                        const pattern = /[A-Z][A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-[0-9]+\\.[0-9]+/g;
+                        return [...document.body.innerText.matchAll(pattern)].map(m => m[0]);
+                    }
+                """)
+                new_this_pass = [c for c in batch if c not in seen]
+                if not new_this_pass:
+                    stale += 1
+                else:
+                    stale = 0
+                    seen.update(dict.fromkeys(new_this_pass))
+                await page.evaluate("""
+                    () => {
+                        for (const el of document.querySelectorAll(
+                            '[data-radix-scroll-area-viewport], .overflow-y-auto, .overflow-auto'
+                        )) {
+                            if (el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+                        }
+                        window.scrollTo(0, document.body.scrollHeight);
+                    }
+                """)
+                await page.wait_for_timeout(800)
+
             before = len(all_codes)
-            all_codes.update(new_codes)
+            all_codes.update(dict.fromkeys(c for c in seen if c not in all_codes))
             found = len(all_codes) - before
             if found:
-                print(f"  {dept}: +{found} course(s)")
+                print(f"  {term}: +{found} course(s)")
 
-        print(f"Scraping complete — {len(all_codes)} total trades courses found")
-        course_codes = list(all_codes)
+        print(f"Scraping complete — {len(all_codes)} total courses found")
+        course_codes = list(all_codes.keys())
 
         await context.storage_state(path=CB_SESSION_FILE)
         await browser.close()
