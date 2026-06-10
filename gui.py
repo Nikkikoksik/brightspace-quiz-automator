@@ -183,6 +183,7 @@ class App(ctk.CTk):
         self._last_assign_urls = []
 
         self._build_ui()
+        self._apply_paste_menus()
         self._load_courses()
         self._load_config()
         self._load_notes()
@@ -221,6 +222,14 @@ class App(ctk.CTk):
         )
         box.pack(fill="x", padx=2, pady=2)
         return box
+
+    def _apply_paste_menus(self, root=None):
+        def walk(widget):
+            if isinstance(widget, ctk.CTkEntry):
+                self._bind_paste_menu(widget)
+            for child in widget.winfo_children():
+                walk(child)
+        walk(root or self)
 
     def _bind_paste_menu(self, entry: ctk.CTkEntry):
         import tkinter as tk
