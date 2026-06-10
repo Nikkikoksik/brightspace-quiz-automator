@@ -209,7 +209,7 @@ async def maybe_rename_staged(page, popup_fn) -> bool:
         return False
 
 
-async def run_mark_ready(course_input: str, dry_run: bool = False, pause_fn=None):
+async def run_mark_ready(course_input: str, dry_run: bool = False):
     """
     Find the _Staged shell for the given CRN/URL and rename _Staged → _Ready
     in both Course Offering Name and Code fields, then save.
@@ -244,15 +244,11 @@ async def run_mark_ready(course_input: str, dry_run: bool = False, pause_fn=None
 
         if "_Ready" in name_val and "_Ready" in code_val:
             print("  ✓ Already marked as Ready — nothing to do")
-            if pause_fn:
-                pause_fn()
             await browser.close()
             return
 
         if "_Staged" not in name_val and "_Staged" not in code_val:
             print("  ⚠ Neither _Staged nor _Ready found — check the course manually")
-            if pause_fn:
-                pause_fn()
             await browser.close()
             return
 
@@ -275,10 +271,7 @@ async def run_mark_ready(course_input: str, dry_run: bool = False, pause_fn=None
         await page.locator("button.d2l-button[primary]").first.click()
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(1000)
-        print("  ✓ Saved — review in the browser above, then click Continue")
-
-        if pause_fn:
-            pause_fn()
+        print("  ✓ Saved")
         await browser.close()
 
 

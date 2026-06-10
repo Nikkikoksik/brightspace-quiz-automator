@@ -177,8 +177,6 @@ class App(ctk.CTk):
 
         self._log_queue    = queue.Queue()
         self._url_rows     = []
-        self._resume_event = threading.Event()
-        self._resume_event.set()
         self._last_quiz_urls   = []
         self._last_assign_urls = []
 
@@ -432,13 +430,6 @@ class App(ctk.CTk):
         )
         self._quiz_run_btn.pack(fill="x", pady=(0, 6))
 
-        self._quiz_pause_btn = ctk.CTkButton(
-            body, text="⏸   PAUSE", height=36,
-            fg_color="#555555", hover_color="#444444",
-            command=self._toggle_quiz_pause, state="disabled",
-        )
-        self._quiz_pause_btn.pack(fill="x", pady=(0, 6))
-
         self._quiz_verify_btn = ctk.CTkButton(
             body, text="🔍   VERIFY SETTINGS  (read-only check, no changes)", height=38,
             fg_color="#2a3a2a", hover_color="#3a5a3a",
@@ -483,14 +474,7 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=17, weight="bold"),
             command=self._start_assignment_run,
         )
-        self._assign_run_btn.pack(fill="x", pady=(0, 6))
-
-        self._assign_pause_btn = ctk.CTkButton(
-            body, text="⏸   PAUSE", height=36,
-            fg_color="#555555", hover_color="#444444",
-            command=self._toggle_assign_pause, state="disabled",
-        )
-        self._assign_pause_btn.pack(fill="x", pady=(0, 12))
+        self._assign_run_btn.pack(fill="x", pady=(0, 12))
 
         self._assign_log = self._log_box(body, height=220)
         self._add_assign_url_row()
@@ -1004,25 +988,17 @@ class App(ctk.CTk):
                     continue
                 elif msg == "__QUIZ_DONE__":
                     self._quiz_run_btn.configure(state="normal", text="▶  Run Quizzes")
-                    self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
                     self._quiz_verify_btn.configure(state="normal", text="🔍   VERIFY SETTINGS  (read-only check, no changes)")
-                    self._resume_event.set()
                     self.after(0, self._post_quiz_review)
                 elif msg == "__ASSIGN_DONE__":
                     self._assign_run_btn.configure(state="normal", text="▶  Run Assignments")
-                    self._assign_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
-                    self._resume_event.set()
                     self.after(0, self._post_assign_review)
                 elif msg == "__DONE__":
                     if tag == "quiz":
                         self._quiz_run_btn.configure(state="normal", text="▶  Run Quizzes")
-                        self._quiz_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
                         self._quiz_verify_btn.configure(state="normal", text="🔍   VERIFY SETTINGS  (read-only check, no changes)")
-                        self._resume_event.set()
                     elif tag == "assign":
                         self._assign_run_btn.configure(state="normal", text="▶  Run Assignments")
-                        self._assign_pause_btn.configure(state="disabled", text="⏸   PAUSE", fg_color="#555555")
-                        self._resume_event.set()
                     elif tag == "tfix":
                         self._tfix_run_btn.configure(state="normal", text="▶  Run Timer Fix")
                     elif tag == "staging":
@@ -1117,8 +1093,6 @@ class App(ctk.CTk):
         self._save_courses(urls)
         self._last_quiz_urls = urls
         self._quiz_run_btn.configure(state="disabled", text="Running…")
-        self._quiz_pause_btn.configure(state="normal")
-        self._resume_event.set()
         self._quiz_log.configure(state="normal")
         self._quiz_log.delete("1.0", "end")
         self._quiz_log.configure(state="disabled")
@@ -1129,13 +1103,6 @@ class App(ctk.CTk):
         dry_run = self._quiz_dryrun.get()
         ask_fn  = self._make_ask_fn()
         q       = self._log_queue
-        resume  = self._resume_event
-
-        def pause_fn():
-            if not resume.is_set():
-                q.put(("quiz", "⏸  Paused — click Resume to continue..."))
-                resume.wait()
-                q.put(("quiz", "▶  Resuming..."))
 
         review_event = threading.Event()
 
@@ -1161,7 +1128,7 @@ class App(ctk.CTk):
                 _sentry_context("quizzes", urls[0] if urls else "")
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
-                                        pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn,
+                                        ask_fn=ask_fn, review_fn=review_fn,
                                         rename_fn=self._popup_yesno))
                 success = True
                 self._append_history(urls, "quiz")
@@ -1173,14 +1140,6 @@ class App(ctk.CTk):
                 q.put(("quiz", "__QUIZ_DONE__" if success else "__DONE__"))
 
         threading.Thread(target=worker, daemon=True).start()
-
-    def _toggle_quiz_pause(self):
-        if self._resume_event.is_set():
-            self._resume_event.clear()
-            self._quiz_pause_btn.configure(text="▶   RESUME", fg_color="#2a4a2a")
-        else:
-            self._resume_event.set()
-            self._quiz_pause_btn.configure(text="⏸   PAUSE", fg_color="#555555")
 
     # ── Quiz verify ───────────────────────────────────────────────────────────
 
@@ -1222,8 +1181,6 @@ class App(ctk.CTk):
             return
         self._last_assign_urls = urls
         self._assign_run_btn.configure(state="disabled", text="Running…")
-        self._assign_pause_btn.configure(state="normal")
-        self._resume_event.set()
         self._assign_log.configure(state="normal")
         self._assign_log.delete("1.0", "end")
         self._assign_log.configure(state="disabled")
@@ -1231,13 +1188,6 @@ class App(ctk.CTk):
         dry_run  = self._assign_dryrun.get()
         ask_fn   = self._make_ask_fn()
         q        = self._log_queue
-        resume   = self._resume_event
-
-        def pause_fn():
-            if not resume.is_set():
-                q.put(("assign", "⏸  Paused — click Resume to continue..."))
-                resume.wait()
-                q.put(("assign", "▶  Resuming..."))
 
         review_event = threading.Event()
 
@@ -1263,7 +1213,7 @@ class App(ctk.CTk):
                 _sentry_context("assignments", urls[0] if urls else "")
                 from browser import run_assignments
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
-                                            pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn,
+                                            ask_fn=ask_fn, review_fn=review_fn,
                                             rename_fn=self._popup_yesno))
                 success = True
                 self._append_history(urls, "assignment")
@@ -1275,14 +1225,6 @@ class App(ctk.CTk):
                 q.put(("assign", "__ASSIGN_DONE__" if success else "__DONE__"))
 
         threading.Thread(target=worker, daemon=True).start()
-
-    def _toggle_assign_pause(self):
-        if self._resume_event.is_set():
-            self._resume_event.clear()
-            self._assign_pause_btn.configure(text="▶   RESUME", fg_color="#2a4a2a")
-        else:
-            self._resume_event.set()
-            self._assign_pause_btn.configure(text="⏸   PAUSE", fg_color="#555555")
 
     # ── Themed popups (fall back to native messagebox if package missing) ─────
 
@@ -1325,8 +1267,6 @@ class App(ctk.CTk):
         self._show_panel("Assignment Automator")
         self._last_assign_urls = urls
         self._assign_run_btn.configure(state="disabled", text="Running…")
-        self._assign_pause_btn.configure(state="normal")
-        self._resume_event.set()
         self._assign_log.configure(state="normal")
         self._assign_log.delete("1.0", "end")
         self._assign_log.configure(state="disabled")
@@ -1334,13 +1274,6 @@ class App(ctk.CTk):
         dry_run  = self._assign_dryrun.get()
         ask_fn   = self._make_ask_fn()
         q        = self._log_queue
-        resume   = self._resume_event
-
-        def pause_fn():
-            if not resume.is_set():
-                q.put(("assign", "⏸  Paused — click Resume to continue..."))
-                resume.wait()
-                q.put(("assign", "▶  Resuming..."))
 
         review_event2 = threading.Event()
 
@@ -1365,7 +1298,7 @@ class App(ctk.CTk):
             try:
                 from browser import run_assignments
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
-                                            pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn2,
+                                            ask_fn=ask_fn, review_fn=review_fn2,
                                             rename_fn=self._popup_yesno))
                 success = True
             except Exception as e:
@@ -1384,8 +1317,6 @@ class App(ctk.CTk):
         self._show_panel("Quiz Automator")
         self._last_quiz_urls = urls
         self._quiz_run_btn.configure(state="disabled", text="Running…")
-        self._quiz_pause_btn.configure(state="normal")
-        self._resume_event.set()
         self._quiz_log.configure(state="normal")
         self._quiz_log.delete("1.0", "end")
         self._quiz_log.configure(state="disabled")
@@ -1396,13 +1327,6 @@ class App(ctk.CTk):
         dry_run = self._quiz_dryrun.get()
         ask_fn  = self._make_ask_fn()
         q       = self._log_queue
-        resume  = self._resume_event
-
-        def pause_fn():
-            if not resume.is_set():
-                q.put(("quiz", "⏸  Paused — click Resume to continue..."))
-                resume.wait()
-                q.put(("quiz", "▶  Resuming..."))
 
         review_event3 = threading.Event()
 
@@ -1428,7 +1352,7 @@ class App(ctk.CTk):
                 _sentry_context("quizzes", urls[0] if urls else "")
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
-                                        pause_fn=pause_fn, ask_fn=ask_fn, review_fn=review_fn3,
+                                        ask_fn=ask_fn, review_fn=review_fn3,
                                         rename_fn=self._popup_yesno))
                 success = True
             except Exception as e:
@@ -1943,18 +1867,6 @@ class App(ctk.CTk):
         self._staging_log.configure(state="disabled")
         dry_run = self._staging_dryrun.get()
         q = self._log_queue
-        resume = self._resume_event
-
-        def pause_fn():
-            resume.clear()
-            self.after(0, lambda: self._mark_ready_btn.configure(
-                state="normal", text="Continue", command=lambda: resume.set()
-            ))
-            resume.wait()
-            self.after(0, lambda: self._mark_ready_btn.configure(
-                text="✔  Mark as Ready  (_Staged → _Ready)",
-                command=self._start_mark_ready,
-            ))
 
         def worker():
             from staging_automator import run_mark_ready
@@ -1964,7 +1876,7 @@ class App(ctk.CTk):
                 def flush(self): pass
             old, sys.stdout = sys.stdout, W()
             try:
-                asyncio.run(run_mark_ready(crn, dry_run=dry_run, pause_fn=pause_fn))
+                asyncio.run(run_mark_ready(crn, dry_run=dry_run))
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("staging", f"✗  {e}"))
