@@ -7,7 +7,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200
-from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary
+from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary, apply_pdf_only_file_type
 
 if os.name == "nt":
     _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
@@ -442,6 +442,7 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 print(f"  Edit URL : {page.url[:100]}")
                 if settings.get("set_in_gradebook"):
                     await apply_assignment_gradebook(page, dry_run)
+                await apply_pdf_only_file_type(page, dry_run)
                 await save_assignment(page, dry_run)
                 elapsed = time.time() - t_start
                 results.append({"name": name, "elapsed": elapsed, "failed": False})
