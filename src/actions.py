@@ -565,51 +565,25 @@ async def verify_quiz_settings(page: Page) -> dict:
 
 async def apply_pdf_only_file_type(page: Page, dry_run: bool):
     """
-    If the Allowable File Extensions dropdown is set to 'Custom File Types',
-    change it to 'PDF Only'. All other values (including 'All file types') are left alone.
+    If the Allowable File Extensions dropdown is set to 'Custom File Types' (value=5),
+    change it to 'PDF Only' (value=1). All other values are left alone.
+    select#assignment-allowable-filetypes may live inside a shadow root.
     """
     try:
-        # Ensure Submission & Completion panel is expanded
+        # Expand Submission & Completion if collapsed
         sub_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Submission")
         if await sub_btn.count() and await sub_btn.get_attribute("aria-expanded") == "false":
             print("    FileType  : expanding Submission & Completion...")
             await sub_btn.click()
             await page.wait_for_timeout(600)
 
-        # Find the Allowable File Extensions dropdown — native <select> or d2l-select
-        info = await page.evaluate("""
+        result = await page.evaluate("""
             () => {
                 function walk(root) {
-                    const labels = root.querySelectorAll('label, span, legend, div');
-                    for (const lbl of labels) {
-                        if (!(lbl.textContent || '').toLowerCase().includes('allowable file')) continue;
-                        // Look for a sibling/nearby select
-                        const parent = lbl.parentElement;
-                        if (!parent) continue;
-                        const sel = parent.querySelector('select') ||
-                                    parent.nextElementSibling?.querySelector('select') ||
-                                    parent.parentElement?.querySelector('select');
-                        if (sel) {
-                            const r = sel.getBoundingClientRect();
-                            if (r.width > 0)
-                                return { type: 'select', value: sel.value,
-                                         text: sel.options[sel.selectedIndex]?.text || sel.value,
-                                         x: r.left + r.width / 2, y: r.top + r.height / 2 };
-                        }
-                        // D2L custom select — look for d2l-select or button with role combobox
-                        const custom = parent.querySelector('d2l-select, [role="listbox"], [role="combobox"]') ||
-                                       parent.nextElementSibling?.querySelector('d2l-select, [role="listbox"]') ||
-                                       parent.parentElement?.querySelector('d2l-select');
-                        if (custom) {
-                            const r = custom.getBoundingClientRect();
-                            if (r.width > 0)
-                                return { type: 'custom', value: custom.getAttribute('value') || '',
-                                         text: custom.getAttribute('value') || custom.textContent?.trim() || '',
-                                         x: r.left + r.width / 2, y: r.top + r.height / 2 };
-                        }
-                    }
+                    const sel = root.querySelector('#assignment-allowable-filetypes');
+                    if (sel) return { value: sel.value, text: sel.options[sel.selectedIndex]?.text || '' };
                     for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
+                        if (el.shadowRoot) { const r = walk(el.shadowRoot); if (r) return r; }
                     }
                     return null;
                 }
@@ -617,97 +591,46 @@ async def apply_pdf_only_file_type(page: Page, dry_run: bool):
             }
         """)
 
-        if not info:
-            print("    FileType  : Allowable File Extensions dropdown not found — skipping")
+        if not result:
+            print("    FileType  : #assignment-allowable-filetypes not found — skipping")
             return
 
-        current = info.get("text", "").strip()
-        print(f"    FileType  : current value = '{current}'")
+        print(f"    FileType  : current = '{result['text']}' (value={result['value']})")
 
-        if "custom" not in current.lower():
-            print("    FileType  : not 'Custom File Types' — skipping")
+        if result["value"] != "5":
+            print("    FileType  : not Custom File Types — skipping")
             return
 
         if dry_run:
             print("    FileType  : [DRY RUN] Would change to PDF Only")
             return
 
-        print("    FileType  : 'Custom File Types' detected → changing to PDF Only...")
-
-        if info["type"] == "select":
-            # Native select — use JS to set value and dispatch events
-            changed = await page.evaluate("""
-                () => {
-                    function walk(root) {
-                        const labels = root.querySelectorAll('label, span, legend, div');
-                        for (const lbl of labels) {
-                            if (!(lbl.textContent || '').toLowerCase().includes('allowable file')) continue;
-                            const parent = lbl.parentElement;
-                            if (!parent) continue;
-                            const sel = parent.querySelector('select') ||
-                                        parent.nextElementSibling?.querySelector('select') ||
-                                        parent.parentElement?.querySelector('select');
-                            if (!sel) continue;
-                            // Find 'PDF Only' option (case-insensitive)
-                            const opt = [...sel.options].find(o => o.text.toLowerCase().includes('pdf only') || o.value.toLowerCase().includes('pdf'));
-                            if (!opt) return 'no-pdf-option';
-                            sel.value = opt.value;
-                            sel.dispatchEvent(new Event('input',  { bubbles: true }));
-                            sel.dispatchEvent(new Event('change', { bubbles: true }));
-                            return 'ok';
-                        }
-                        for (const el of root.querySelectorAll('*')) {
-                            if (el.shadowRoot) { const r = walk(el.shadowRoot); if (r) return r; }
-                        }
-                        return null;
+        print("    FileType  : Custom File Types → changing to PDF Only...")
+        changed = await page.evaluate("""
+            () => {
+                function walk(root) {
+                    const sel = root.querySelector('#assignment-allowable-filetypes');
+                    if (sel) {
+                        sel.value = '1';
+                        sel.dispatchEvent(new Event('input',  { bubbles: true }));
+                        sel.dispatchEvent(new Event('change', { bubbles: true }));
+                        return sel.value;
                     }
-                    return walk(document);
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const r = walk(el.shadowRoot); if (r) return r; }
+                    }
+                    return null;
                 }
-            """)
-            if changed == "ok":
-                print("    FileType  : ✓ Changed to PDF Only")
-            elif changed == "no-pdf-option":
-                print("    FileType  : ⚠ 'PDF Only' option not found in dropdown")
-            else:
-                print(f"    FileType  : ⚠ unexpected result: {changed}")
+                return walk(document);
+            }
+        """)
+        if changed == "1":
+            print("    FileType  : ✓ Changed to PDF Only")
         else:
-            # D2L custom component — click to open, then pick PDF Only
-            await _flash_click(page, info["x"], info["y"])
-            await page.wait_for_timeout(500)
-            pdf_option = await page.evaluate("""
-                () => {
-                    function walk(root) {
-                        for (const el of root.querySelectorAll('d2l-menu-item, li, option, [role="option"]')) {
-                            const t = (el.getAttribute('text') || el.textContent || '').trim().toLowerCase();
-                            if (t.includes('pdf only') || t === 'pdf') {
-                                const r = el.getBoundingClientRect();
-                                if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-                            }
-                        }
-                        for (const el of root.querySelectorAll('*')) {
-                            if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
-                        }
-                        return null;
-                    }
-                    return walk(document);
-                }
-            """)
-            if pdf_option:
-                await _flash_click(page, pdf_option["x"], pdf_option["y"])
-                await page.wait_for_timeout(400)
-                print("    FileType  : ✓ Changed to PDF Only")
-            else:
-                print("    FileType  : ⚠ 'PDF Only' option not visible after opening dropdown")
-                await page.keyboard.press("Escape")
-                await page.wait_for_timeout(300)
+            print(f"    FileType  : ⚠ set value returned {changed!r}")
 
     except Exception as e:
         print(f"    FileType  : ✗ {e}")
-        try:
-            await page.keyboard.press("Escape")
-        except Exception:
-            pass
-        await page.wait_for_timeout(300)
 
 
 async def save_assignment(page: Page, dry_run: bool):
