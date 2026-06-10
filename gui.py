@@ -183,6 +183,7 @@ class App(ctk.CTk):
         self._last_assign_urls = []
 
         self._build_ui()
+        self._apply_paste_menus()
         self._load_courses()
         self._load_config()
         self._load_notes()
@@ -221,6 +222,68 @@ class App(ctk.CTk):
         )
         box.pack(fill="x", padx=2, pady=2)
         return box
+
+    def _apply_paste_menus(self, root=None):
+        def walk(widget):
+            if isinstance(widget, ctk.CTkEntry):
+                self._bind_paste_menu(widget)
+            for child in widget.winfo_children():
+                walk(child)
+        walk(root or self)
+
+    def _bind_paste_menu(self, entry: ctk.CTkEntry):
+        import tkinter as tk
+
+        def paste():
+            try:
+                text = entry.clipboard_get()
+            except Exception:
+                return
+            try:
+                entry._entry.delete("sel.first", "sel.last")
+            except Exception:
+                pass
+            entry._entry.insert("insert", text)
+
+        def cut():
+            try:
+                text = entry._entry.selection_get()
+                entry.clipboard_clear()
+                entry.clipboard_append(text)
+                entry._entry.delete("sel.first", "sel.last")
+            except Exception:
+                pass
+
+        def copy():
+            try:
+                text = entry._entry.selection_get()
+                entry.clipboard_clear()
+                entry.clipboard_append(text)
+            except Exception:
+                pass
+
+        def select_all():
+            entry._entry.selection_range(0, "end")
+            entry._entry.icursor("end")
+
+        def clear():
+            entry.delete(0, "end")
+
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Cut",        command=cut)
+        menu.add_command(label="Copy",       command=copy)
+        menu.add_command(label="Paste",      command=paste)
+        menu.add_separator()
+        menu.add_command(label="Select All", command=select_all)
+        menu.add_command(label="Clear",      command=clear)
+
+        def show(event):
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+
+        entry.bind("<Button-3>", show)
 
     # ── UI layout ─────────────────────────────────────────────────────────────
 
@@ -838,6 +901,7 @@ class App(ctk.CTk):
         row.pack(fill="x", padx=10, pady=5)
         entry = ctk.CTkEntry(row, placeholder_text="Paste course page URL here…", height=38)
         entry.pack(side="left", fill="x", expand=True)
+        self._bind_paste_menu(entry)
         if url:
             entry.insert(0, url)
         def remove():
@@ -853,6 +917,7 @@ class App(ctk.CTk):
         row.pack(fill="x", padx=10, pady=5)
         entry = ctk.CTkEntry(row, placeholder_text="Paste course page URL here…", height=38)
         entry.pack(side="left", fill="x", expand=True)
+        self._bind_paste_menu(entry)
         if url:
             entry.insert(0, url)
         def remove():
@@ -868,6 +933,7 @@ class App(ctk.CTk):
         row.pack(fill="x", padx=10, pady=5)
         entry = ctk.CTkEntry(row, placeholder_text="Paste quiz page URL here…", height=38)
         entry.pack(side="left", fill="x", expand=True)
+        self._bind_paste_menu(entry)
         if url:
             entry.insert(0, url)
         def remove():
