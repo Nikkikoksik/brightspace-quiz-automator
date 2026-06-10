@@ -48,9 +48,17 @@ git push origin nick --force-with-lease # push your rebased nick to GitHub (--fo
 ## Git — Committing and Pushing to Dev
 
 ```powershell
-git add .                               # stage all changed files
+git status                              # It shows you every file that changed. You'll see something like: 
+#modified:   gui.py or modified:   src/actions.py
+
+git add gui.py  # only add what is in the list
+
 git commit -m "describe what you changed" # save a snapshot with a message
-git push origin nick                    # upload your nick branch to GitHub
+
+git push origin nick                    # "send my local nick branch up to GitHub"
+# origin — the name for your GitHub repo (it's just an alias git sets up automatically when you clone)
+
+#nick — which branch to push
 git switch dev                          # move to the dev branch
 git merge nick --no-edit               # merge your changes into dev (--no-edit skips the vim prompt)
 git push origin dev                     # upload the updated dev to GitHub
