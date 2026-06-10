@@ -359,7 +359,26 @@ async def _cb_login(page, email: str, password: str):
 async def _cb_upload_and_convert(page, file_path: Path):
     """Upload file, set template to Course Syllabus, click Convert, wait for Copy HTML."""
     print(f"  Uploading {file_path.name}...")
-    await page.locator("input[accept='.pdf,.doc,.docx']").set_input_files(str(file_path))
+    # Try specific accept selector first; fall back to any file input if the
+    # attribute value has changed on CourseBridge's side.
+    selectors = [
+        "input[accept='.pdf,.docx,.pptx,.txt,.md,.markdown,.text,.html,.htm,.csv,.tsv,.rtf,.json']",
+        "input[accept='.pdf,.doc,.docx']",
+        "input[type='file']",
+    ]
+    uploaded = False
+    for selector in selectors:
+        try:
+            await page.wait_for_selector(selector, state="attached", timeout=30000)
+            print(f"  Found upload input: {selector}")
+            await page.locator(selector).first.set_input_files(str(file_path))
+            uploaded = True
+            break
+        except Exception as e:
+            print(f"  Selector {selector!r} failed: {e}")
+            continue
+    if not uploaded:
+        raise RuntimeError("Could not find the file upload input on CourseBridge — the page may have changed.")
     await page.wait_for_timeout(500)
     trigger = page.locator("button[data-slot='select-trigger']").first
     template_text = await trigger.inner_text()
@@ -408,9 +427,9 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
         await context.grant_permissions(["clipboard-read", "clipboard-write"])
         page = await context.new_page()
         await page.goto(COURSEBRIDGE_URL)
-        await _cb_login(page, email, password)
         await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(1000)
+        await _cb_login(page, email, password)
+        await page.wait_for_timeout(2000)
         await _cb_upload_and_convert(page, file_path)
         html = await _cb_get_html(page)
         await context.storage_state(path=CB_SESSION_FILE)
@@ -699,9 +718,7 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
 
         preview_path = _HERE / "coursebridge_preview.html"
         preview_path.write_text(html, encoding="utf-8")
-        print(f"\n  Opening HTML preview in Notepad: {preview_path}")
-        subprocess.Popen(["notepad.exe", str(preview_path)])
-        prompt_fn("Review the HTML in Notepad. Click OK when ready to continue.")
+        print(f"\n  HTML saved to {preview_path.name} ({len(html):,} chars)")
 
         if dry_run:
             print("\n✓ Dry run complete — HTML saved to coursebridge_preview.html")

@@ -18,6 +18,25 @@ SESSION_FILE = str(_USERDATA_DIR / "session.json")
 STATS_FILE   = str(_USERDATA_DIR / "timing_stats.json")
 
 
+def _print_run_summary(results: list, kind: str = "item"):
+    W = 54
+    errors   = [r for r in results if r["failed"]]
+    ok_times = [r["elapsed"] for r in results if not r["failed"]]
+    print(f"\n{'─' * W}")
+    print(f"  SUMMARY  ·  {len(results)} {kind}(s)")
+    print(f"{'─' * W}")
+    for r in results:
+        status = "✗" if r["failed"] else "✓"
+        name = r["name"] if len(r["name"]) <= 38 else r["name"][:37] + "…"
+        note = "FAILED" if r["failed"] else f"{r['elapsed']:.1f}s"
+        print(f"  {status}  {name:<39}{note}")
+    print(f"{'─' * W}")
+    parts = [f"Avg time : {sum(ok_times)/len(ok_times):.1f}s"] if ok_times else []
+    parts.append(f"Errors : {len(errors)}" if errors else "All OK ✓")
+    print("  " + "   ·   ".join(parts))
+    print(f"{'─' * W}")
+
+
 def _save_timing(course_url: str, quiz_name: str, elapsed_s: float):
     try:
         try:
@@ -136,6 +155,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                 print(f"Found {total} quiz(es). Starting...")
 
             failed_timer = []
+            results      = []
             for i, name in enumerate(names, start_from):
                 print(f"\n[{i}/{total}]  [{name}]")
                 t_start = time.time()
@@ -169,6 +189,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                             failed_timer.append(f"[{i}/{total}] {name}")
                 await save_quiz(page, dry_run)
                 elapsed = time.time() - t_start
+                results.append({"name": name, "elapsed": elapsed, "failed": quiz_failed})
                 if not quiz_failed and not dry_run:
                     _save_timing(quiz_url, name, elapsed)
                     print(f"    Timing    : {elapsed:.1f}s")
@@ -180,6 +201,9 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                 print(f"⚠  {len(failed_timer)} quiz(es) need manual timer fix:")
                 for q in failed_timer:
                     print(f"   • {q}")
+
+            if results:
+                _print_run_summary(results, "quiz")
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
@@ -400,8 +424,10 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             else:
                 print(f"Found {total} assignment(s). Starting...")
 
+            results = []
             for i, name in enumerate(names, start_from):
                 print(f"\n[{i}/{total}]  [{name}]")
+                t_start = time.time()
                 try:
                     await page.goto(asgn_url, wait_until="commit")
                 except Exception:
@@ -414,8 +440,14 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 if settings.get("set_in_gradebook"):
                     await apply_assignment_gradebook(page, dry_run)
                 await save_assignment(page, dry_run)
+                elapsed = time.time() - t_start
+                results.append({"name": name, "elapsed": elapsed, "failed": False})
+                print(f"    Timing    : {elapsed:.1f}s")
                 if pause_fn:
                     pause_fn()
+
+            if results:
+                _print_run_summary(results, "assignment")
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
