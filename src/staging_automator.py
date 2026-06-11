@@ -167,18 +167,12 @@ async def maybe_rename_staged(page, popup_fn) -> bool:
             return False
         ou = m.group(1)
 
-        import threading
-        result = [False]
-        event  = threading.Event()
-        def ask():
-            result[0] = popup_fn(
-                "Mark as Ready?",
-                f"Rename this course from:\n\n  {title}\n\nto:\n\n  {new_title}?"
-            )
-            event.set()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: (ask(), event.wait()))
-        if not result[0]:
+        confirmed = await loop.run_in_executor(None, lambda: popup_fn(
+            "Mark as Ready?",
+            f"Rename this course from:\n\n  {title}\n\nto:\n\n  {new_title}?"
+        ))
+        if not confirmed:
             print("  Skipping rename — user declined")
             return False
 

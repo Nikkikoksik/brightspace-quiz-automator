@@ -1129,7 +1129,7 @@ class App(ctk.CTk):
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
                                         ask_fn=ask_fn, review_fn=review_fn,
-                                        rename_fn=self._popup_yesno))
+                                        rename_fn=self._threadsafe_yesno))
                 success = True
                 self._append_history(urls, "quiz")
             except Exception as e:
@@ -1214,7 +1214,7 @@ class App(ctk.CTk):
                 from browser import run_assignments
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
                                             ask_fn=ask_fn, review_fn=review_fn,
-                                            rename_fn=self._popup_yesno))
+                                            rename_fn=self._threadsafe_yesno))
                 success = True
                 self._append_history(urls, "assignment")
             except Exception as e:
@@ -1241,6 +1241,17 @@ class App(ctk.CTk):
                                 icon="question", option_1="No", option_2="Yes")
             return box.get() == "Yes"
         return messagebox.askyesno(title, message)
+
+    def _threadsafe_yesno(self, title: str, message: str) -> bool:
+        """Thread-safe wrapper — schedules the dialog on the tkinter main thread."""
+        event  = threading.Event()
+        result = [False]
+        def show():
+            result[0] = self._popup_yesno(title, message)
+            event.set()
+        self.after(0, show)
+        event.wait()
+        return result[0]
 
     # ── Post-run review prompts ───────────────────────────────────────────────
 
@@ -1299,7 +1310,7 @@ class App(ctk.CTk):
                 from browser import run_assignments
                 asyncio.run(run_assignments(urls=urls, dry_run=dry_run, settings=settings,
                                             ask_fn=ask_fn, review_fn=review_fn2,
-                                            rename_fn=self._popup_yesno))
+                                            rename_fn=self._threadsafe_yesno))
                 success = True
             except Exception as e:
                 _sentry_capture(e)
@@ -1353,7 +1364,7 @@ class App(ctk.CTk):
                 from browser import run as browser_run
                 asyncio.run(browser_run(urls=urls, dry_run=dry_run, settings=settings,
                                         ask_fn=ask_fn, review_fn=review_fn3,
-                                        rename_fn=self._popup_yesno))
+                                        rename_fn=self._threadsafe_yesno))
                 success = True
             except Exception as e:
                 _sentry_capture(e)
@@ -1437,7 +1448,7 @@ class App(ctk.CTk):
                     email=email,
                     password=password,
                     prompt_fn=prompter,
-                    rename_fn=self._popup_yesno,
+                    rename_fn=self._threadsafe_yesno,
                 ))
             except Exception as e:
                 _sentry_capture(e)
