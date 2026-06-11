@@ -11,7 +11,10 @@ import sys
 from pathlib import Path
 
 if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except AttributeError:
+        pass
 
 from playwright.async_api import async_playwright
 from browser import SESSION_FILE, _wait_for_login
