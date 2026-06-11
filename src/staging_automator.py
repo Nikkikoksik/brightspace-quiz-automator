@@ -157,8 +157,17 @@ async def maybe_rename_staged(page, popup_fn) -> bool:
     try:
         nav = page.locator("a.d2l-navigation-s-link").first
         if not await nav.count():
-            print("  Rename check: nav link not found on this page — skipping")
-            return False
+            # Current page (e.g. quiz/assignment redirect) has no nav header — go to course home
+            m_ou = re.search(r'[?&]ou=(\d+)', page.url)
+            if not m_ou:
+                print("  Rename check: nav link not found and no OU in URL — skipping")
+                return False
+            print(f"  Rename check: navigating to course home (ou={m_ou.group(1)})...")
+            await page.goto(f"{BS_BASE}/d2l/home/{m_ou.group(1)}", wait_until="domcontentloaded")
+            await page.wait_for_timeout(800)
+            if not await nav.count():
+                print("  Rename check: nav link not found even on course home — skipping")
+                return False
         title = await nav.get_attribute("title") or ""
         href  = await nav.get_attribute("href")  or ""
         print(f"  Rename check: course = '{title}'")
