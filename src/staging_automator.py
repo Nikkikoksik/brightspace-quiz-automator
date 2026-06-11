@@ -158,7 +158,8 @@ async def maybe_rename_staged(page, popup_fn) -> bool:
         nav = page.locator("a.d2l-navigation-s-link").first
         if not await nav.count():
             # Current page (e.g. quiz/assignment redirect) has no nav header — go to course home
-            m_ou = re.search(r'[?&]ou=(\d+)', page.url)
+            from urllib.parse import unquote
+            m_ou = re.search(r'[?&]ou=(\d+)', unquote(page.url))
             if not m_ou:
                 print("  Rename check: nav link not found and no OU in URL — skipping")
                 return False
