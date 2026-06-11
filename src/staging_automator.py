@@ -157,10 +157,13 @@ async def maybe_rename_staged(page, popup_fn) -> bool:
     try:
         nav = page.locator("a.d2l-navigation-s-link").first
         if not await nav.count():
+            print("  Rename check: nav link not found on this page — skipping")
             return False
         title = await nav.get_attribute("title") or ""
         href  = await nav.get_attribute("href")  or ""
+        print(f"  Rename check: course = '{title}'")
         if "_Staged" not in title:
+            print("  Rename check: not a _Staged course — skipping")
             return False
 
         new_title = title.replace("_Staged", "_Ready")
