@@ -327,7 +327,7 @@ class App(ctk.CTk):
             sidebar, text="  OPTIONAL",
             font=ctk.CTkFont(size=10), text_color=_TEXT_FAINT,
         ).grid(row=7, column=0, sticky="w", padx=8, pady=(2, 0))
-        for r, (key, label) in enumerate([("Timer Fix", "  Timer Fix"), ("Queue", "  Queue"), ("History", "  History")], start=8):
+        for r, (key, label) in enumerate([("Timer Fix", "  Timer Fix"), ("Queue", "  Queue"), ("History", "  History"), ("Content Cleaner", "  Content Cleaner")], start=8):
             btn = ctk.CTkButton(
                 sidebar, text=label, anchor="w", height=40,
                 fg_color="transparent", hover_color=_NAV_HOVER,
@@ -338,9 +338,9 @@ class App(ctk.CTk):
             btn.grid(row=r, column=0, sticky="ew", padx=8, pady=2)
             self._nav_btns[key] = btn
 
-        sidebar.grid_rowconfigure(11, weight=1)
+        sidebar.grid_rowconfigure(12, weight=1)
         ctk.CTkFrame(sidebar, height=1, fg_color=_DIVIDER).grid(
-            row=11, column=0, sticky="sew", padx=16, pady=(0, 4),
+            row=12, column=0, sticky="sew", padx=16, pady=(0, 4),
         )
         settings_btn = ctk.CTkButton(
             sidebar, text=f"  Settings  {VERSION}", anchor="w", height=40,
@@ -349,7 +349,7 @@ class App(ctk.CTk):
             corner_radius=6,
             command=lambda: self._show_panel("Settings"),
         )
-        settings_btn.grid(row=12, column=0, sticky="ew", padx=8, pady=(0, 16))
+        settings_btn.grid(row=13, column=0, sticky="ew", padx=8, pady=(0, 16))
         self._nav_btns["Settings"] = settings_btn
 
         # Content area
@@ -364,6 +364,7 @@ class App(ctk.CTk):
             ("Assignment Automator", self._build_assignment_panel),
             ("Timer Fix",            self._build_timer_fix_panel),
             ("Course Outline",       self._build_outline_panel),
+            ("Content Cleaner",      self._build_content_cleaner_panel),
             ("Staging",              self._build_staging_panel),
             ("Queue",                self._build_queue_panel),
             ("Notes",                self._build_notes_panel),
@@ -556,6 +557,68 @@ class App(ctk.CTk):
         self._test_step4_btn.pack(fill="x", pady=(0, 12))
 
         self._outline_log = self._log_box(body, height=220)
+
+    # ── Content Cleaner panel ─────────────────────────────────────────────────
+
+    def _build_content_cleaner_panel(self, parent):
+        body = self._panel_body(parent, "Content Cleaner",
+                                "Replace 'Moodle' references with 'Brightspace' across all content topics")
+
+        self._section_label(body, "COURSE  (CRN number  or  full Brightspace URL)")
+        self._cleaner_url = ctk.CTkEntry(
+            body, placeholder_text="e.g.  80147  or  https://learn.okanagancollege.ca/…",
+            height=38,
+        )
+        self._cleaner_url.pack(fill="x", pady=(0, 16))
+
+        sf = ctk.CTkFrame(body)
+        sf.pack(fill="x", pady=(0, 16))
+        self._cleaner_dryrun = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            sf,
+            text="Dry run  (scan only — nothing will be changed)",
+            variable=self._cleaner_dryrun, text_color="#f0a500",
+        ).pack(anchor="w", padx=16, pady=14)
+
+        self._cleaner_run_btn = ctk.CTkButton(
+            body, text="▶  Run Content Cleaner", height=52,
+            font=ctk.CTkFont(size=17, weight="bold"),
+            command=self._start_content_cleaner_run,
+        )
+        self._cleaner_run_btn.pack(fill="x", pady=(0, 12))
+
+        self._cleaner_log = self._log_box(body, height=300)
+
+    def _start_content_cleaner_run(self):
+        course_url = self._cleaner_url.get().strip()
+        if not course_url:
+            self._append(self._cleaner_log, "⚠  Course URL or CRN is required.")
+            return
+
+        self._cleaner_run_btn.configure(state="disabled", text="Running…")
+        self._cleaner_log.configure(state="normal")
+        self._cleaner_log.delete("1.0", "end")
+        self._cleaner_log.configure(state="disabled")
+        dry_run = self._cleaner_dryrun.get()
+        q = self._log_queue
+
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("cleaner", t.rstrip()))
+                def flush(self): pass
+            old, sys.stdout = sys.stdout, W()
+            try:
+                from content_cleaner import scan_course
+                asyncio.run(scan_course(course_url=course_url, dry_run=dry_run))
+            except Exception as e:
+                _sentry_capture(e)
+                q.put(("cleaner", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("cleaner", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ── Staging panel ─────────────────────────────────────────────────────────
 
@@ -980,6 +1043,7 @@ class App(ctk.CTk):
                     "assign":  self._assign_log,
                     "tfix":    self._tfix_log,
                     "staging": self._staging_log,
+                    "cleaner": self._cleaner_log,
                 }.get(tag, self._outline_log)
 
                 if tag == "note":
@@ -1003,6 +1067,8 @@ class App(ctk.CTk):
                         self._tfix_run_btn.configure(state="normal", text="▶  Run Timer Fix")
                     elif tag == "staging":
                         self._staging_steps12_btn.configure(state="normal", text="▶  Stage Course")
+                    elif tag == "cleaner":
+                        self._cleaner_run_btn.configure(state="normal", text="▶  Run Content Cleaner")
                     else:
                         self._outline_run_btn.configure(state="normal", text="▶  Run Course Outline")
                 else:
