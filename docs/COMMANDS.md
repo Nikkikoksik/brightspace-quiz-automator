@@ -47,6 +47,9 @@ git commit -m "Ignore filename.txt"
 
 ```
 
+> Use this for personal notes, test files, or    anything that should 
+> only live on your computer.
+
 ## Git — Before Starting Work (run every session)
 
 ```powershell

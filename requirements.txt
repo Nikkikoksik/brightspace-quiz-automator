@@ -4,3 +4,4 @@ watchdog
 pdf2docx
 mammoth
 sentry-sdk
+PyQt6
