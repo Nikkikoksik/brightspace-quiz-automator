@@ -31,6 +31,16 @@ git branch
 
 ---
 
+## Git — Ignoring a File
+```powershell
+#Stop tracking a file git already knows about
+git rm --cached filename.txt
+
+# Then add it to .gitignore so git never picks it up again
+echo "cool_ideas.txt" >> .gitignore
+
+# >> — means "take whatever is on my left and append it to the file on my right." Append means add to the end without touching what's already there.
+
 ## Git — Before Starting Work (run every session)
 
 ```powershell
