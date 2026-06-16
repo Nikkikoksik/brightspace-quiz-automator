@@ -24,7 +24,8 @@ python quiz_automator.py   # CLI fallback
 ```
 
 ## File structure
-- `gui.py` — CustomTkinter GUI app (primary interface)
+- `gui.py` — CustomTkinter GUI app (primary interface, production)
+- `gui_pyqt6.py` — PyQt6 GUI rebuild (WIP on `nick` branch — see section below)
 - `quiz_automator.py` — CLI entry point, reads URLs from `courses.txt`
 - `config.py` — default settings toggles for CLI
 - `browser.py` — browser session setup, loops over courses and quizzes
@@ -32,7 +33,7 @@ python quiz_automator.py   # CLI fallback
 - `actions.py` — `apply_gradebook()`, `apply_auto_submit()`, `save_quiz()`
 - `courses.txt` — one quiz page URL per line (gitignored user data)
 - `setup.bat` — one-time install for co-workers
-- `run.bat` — launches gui.py
+- `run.bat` — launches gui.py (still points at old GUI — do not change until PyQt6 version is confirmed working)
 - `update.bat` — downloads latest ZIP from GitHub (no Git needed)
 
 ## GitHub
@@ -135,3 +136,40 @@ Stops before pasting HTML into Brightspace. Still does download + conversion so 
 
 ## Not built yet
 File does not exist as of 2026-06-02. Spec is in `COURSE_OUTLINE_AUTOMATOR_SPEC.md` (user's Downloads folder).
+
+---
+
+# PyQt6 GUI Rebuild — WIP (`nick` branch)
+
+`gui_pyqt6.py` is a full rebuild of `gui.py` using PyQt6 instead of CustomTkinter. It is a surprise for co-workers — keep it on the `nick` branch until ready to ship.
+
+## How to run
+```
+python gui_pyqt6.py
+```
+To compare with old GUI side by side (PowerShell):
+```
+Start-Process python -ArgumentList "gui.py"; Start-Process python -ArgumentList "gui_pyqt6.py"
+```
+
+## Current state (as of 2026-06-15)
+- All 9 panels built and wired up (Staging, Quizzes, Assignments, Course Outline, Notes, Timer Fix, Queue, History, Settings)
+- Slate theme applied: bg `#0d1117`, sidebar `#010409`, accent `#0ea5e9`
+- App icon wired up from `installer/assets/icon.ico` (shows in Windows taskbar)
+- Checkboxes: white checkmark SVG written to `%APPDATA%/BrightspaceAutomator/check.svg` at startup
+- Cross-thread UI (dialogs from worker threads) handled by `_ThreadBridge` QObject using `pyqtSignal`
+- `run.bat` still points at `gui.py` — production is untouched
+
+## What still needs work
+- **Collapsible sidebar** — user requested, not built yet
+- **Visual polish** — layout is a 1:1 port of the old design; needs proper redesign (not just a re-skin)
+  - Ideas discussed: progress indicators, colored log prefixes (✓/⚠/✗), cards with icons, inline session status, run history badge on nav
+- **Functional testing** — all panels are wired to the same backend as `gui.py` but have not been tested end-to-end
+- **Timer Fix panel** — `_add_url_row` call has a bug (passes wrong container arg — `self._tfix_url_rows` instead of `self._tfix_url_container`); needs fixing before testing
+
+## Key architecture differences vs gui.py
+- `QTimer` replaces tkinter's `.after()` for the log polling loop
+- `QStackedWidget` replaces the grid show/hide panel pattern
+- `_ThreadBridge(QObject)` with `pyqtSignal` replaces `root.after(0, show)` for cross-thread dialogs
+- `_RangeDialog(QDialog)` replaces the CTkToplevel ask-range popup
+- All persistence files and paths are identical — same `%APPDATA%/BrightspaceAutomator/` location

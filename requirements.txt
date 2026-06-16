@@ -6,3 +6,4 @@ pdf2docx
 mammoth
 pypandoc
 sentry-sdk
+PyQt6
