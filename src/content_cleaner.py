@@ -257,6 +257,14 @@ async def _click_dialog_button(edit_page, label: str) -> None:
     """, label)
 
 
+def _case_replace(word: str) -> str:
+    if word == word.upper():
+        return "BRIGHTSPACE"
+    if word[0].isupper():
+        return "Brightspace"
+    return "brightspace"
+
+
 def replace_moodle(html: str, topic_name: str) -> tuple[str, list[str], list[str]]:
     """
     Replace 'moodle' text in HTML. Returns (new_html, changes, warnings).
@@ -265,13 +273,6 @@ def replace_moodle(html: str, topic_name: str) -> tuple[str, list[str], list[str
     """
     changes: list[str] = []
     warnings: list[str] = []
-
-    def _case_replace(word: str) -> str:
-        if word == word.upper():
-            return "BRIGHTSPACE"
-        if word[0].isupper():
-            return "Brightspace"
-        return "brightspace"
 
     # Step 1: handle <a href="...moodle..."> links
     def _replace_link(m: re.Match) -> str:
@@ -311,12 +312,41 @@ def replace_moodle(html: str, topic_name: str) -> tuple[str, list[str], list[str
     return html, changes, warnings
 
 
+def replace_moodle_in_title(title: str) -> tuple[str, bool]:
+    new = re.sub(r"\bmoodle\b", lambda m: _case_replace(m.group(0)), title, flags=re.IGNORECASE)
+    return new, new != title
+
+
+_FIND_AND_SET_TITLE_JS = """
+    (newTitle) => {
+        try {
+            const input = document
+                .querySelector('d2l-activity-content-editor').shadowRoot
+                .querySelector('d2l-activity-editor').shadowRoot
+                .querySelector('d2l-activity-content-editor-detail').shadowRoot
+                .querySelector('d2l-activity-content-file-detail').shadowRoot
+                .querySelector('d2l-activity-content-editor-title').shadowRoot
+                .querySelector('d2l-input-text').shadowRoot
+                .querySelector('input');
+            if (!input) return false;
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(input, newTitle);
+            input.dispatchEvent(new Event('input', {bubbles: true}));
+            input.dispatchEvent(new Event('change', {bubbles: true}));
+            return true;
+        } catch(e) { return false; }
+    }
+"""
+
+
 async def process_topic(
     page: Page, course_id: str, topic: dict, dry_run: bool
 ) -> tuple[list[str], list[str]]:
     """Open a topic editor, read HTML via Source Code dialog, optionally replace and save."""
     title    = topic["Title"]
     topic_id = topic["TopicId"]
+
+    new_title, title_changed = replace_moodle_in_title(title)
 
     async def _close(ep):
         if ep is not page:
@@ -389,14 +419,17 @@ async def process_topic(
         except Exception:
             html = None
 
-    if html is None:
+    if html is None and not title_changed:
         print("    Not an HTML topic — skipped")
         await _close(edit_page)
         return [], []
 
-    new_html, changes, warnings = replace_moodle(html, title)
+    if html is not None:
+        new_html, changes, warnings = replace_moodle(html, title)
+    else:
+        new_html, changes, warnings = "", [], []
 
-    if not changes and not warnings:
+    if not changes and not warnings and not title_changed:
         print("    No Moodle references found")
         if via_dialog:
             await _click_dialog_button(edit_page, "Cancel")
@@ -409,7 +442,13 @@ async def process_topic(
     for line in warnings:
         print(line)
 
+    if title_changed:
+        print(f"  [title] '{title}' → '{new_title}'")
+        changes.append(f"  [title] '{title}' → '{new_title}'")
+
     if dry_run:
+        if title_changed:
+            print("    (dry run — title not renamed)")
         print("    (dry run — not saved)")
         if via_dialog:
             await _click_dialog_button(edit_page, "Cancel")
@@ -417,24 +456,33 @@ async def process_topic(
         await _close(edit_page)
         return changes, warnings
 
-    # ── live run: write changes ───────────────────────────────────────────
-    if via_dialog:
-        ok = await _set_dialog_textarea(edit_page, new_html)
-        if not ok:
-            print("    ✗ Could not write to dialog textarea")
-            await _click_dialog_button(edit_page, "Cancel")
+    # ── live run: write HTML changes ──────────────────────────────────────
+    if html is not None:
+        if via_dialog:
+            ok = await _set_dialog_textarea(edit_page, new_html)
+            if not ok:
+                print("    ✗ Could not write to dialog textarea")
+                await _click_dialog_button(edit_page, "Cancel")
+                await edit_page.wait_for_timeout(400)
+                await _close(edit_page)
+                return [], []
             await edit_page.wait_for_timeout(400)
-            await _close(edit_page)
-            return [], []
-        await edit_page.wait_for_timeout(400)
-        await _click_dialog_button(edit_page, "Save")
-        await edit_page.wait_for_timeout(800)
-    else:
-        result = await _set_tinymce_content(edit_page, new_html)
-        if result != "ok":
-            print(f"    ✗ Could not set content: {result}")
-            await _close(edit_page)
-            return [], []
+            await _click_dialog_button(edit_page, "Save")
+            await edit_page.wait_for_timeout(800)
+        else:
+            result = await _set_tinymce_content(edit_page, new_html)
+            if result != "ok":
+                print(f"    ✗ Could not set content: {result}")
+                await _close(edit_page)
+                return [], []
+
+    # ── live run: write title ─────────────────────────────────────────────
+    if title_changed:
+        ok = await edit_page.evaluate(_FIND_AND_SET_TITLE_JS, new_title)
+        if ok:
+            print("    ✓ Title updated")
+        else:
+            print("    ✗ Title input not found — rename manually")
 
     await edit_page.wait_for_timeout(500)
     await _save_two_pass(edit_page)
@@ -532,8 +580,23 @@ async def scan_course(course_url: str, dry_run: bool = False) -> None:
             topics = [t for t in topics if t["TopicId"] not in skip_ids]
             print(f"  {before - len(topics)} topic(s) excluded, {len(topics)} remaining")
 
+        all_filtered = topics[:]
+        title_hit_ids = {
+            t["TopicId"] for t in all_filtered
+            if re.search(r"\bmoodle\b", t["Title"], re.IGNORECASE)
+        }
+        if title_hit_ids:
+            print(f"  {len(title_hit_ids)} topic(s) with Moodle in title")
+
         print("Pre-scanning for Moodle references...")
-        topics = await pre_scan_topics(page, topics)
+        topics = await pre_scan_topics(page, all_filtered)
+
+        prescan_ids = {t["TopicId"] for t in topics}
+        title_only = [t for t in all_filtered if t["TopicId"] in title_hit_ids - prescan_ids]
+        if title_only:
+            print(f"  + {len(title_only)} title-only topic(s) added")
+            topics += title_only
+
         print(f"  {len(topics)} topic(s) to open in editor")
         print(f"{'─' * 50}")
 
