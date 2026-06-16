@@ -563,8 +563,25 @@ async def scan_course(course_url: str, dry_run: bool = False) -> None:
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(2000)
 
-        content_url = f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
-        print(f"Navigating to content tab...")
+        nav_href = await page.evaluate("""
+            () => {
+                function walk(root) {
+                    for (const el of root.querySelectorAll('d2l-menu-item')) {
+                        const text = (el.getAttribute('text') || el.textContent || '').trim().toLowerCase();
+                        const href = el.getAttribute('href') || '';
+                        if (text === 'content' && href)
+                            return new URL(href, location.origin).href;
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const r = walk(el.shadowRoot); if (r) return r; }
+                    }
+                    return null;
+                }
+                return walk(document);
+            }
+        """)
+        content_url = nav_href or f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
+        print(f"Navigating to content tab{' (from nav)' if nav_href else ' (direct URL)'}...")
         await page.goto(content_url)
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(3000)
