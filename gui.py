@@ -571,15 +571,6 @@ class App(ctk.CTk):
         )
         self._cleaner_url.pack(fill="x", pady=(0, 16))
 
-        sf = ctk.CTkFrame(body)
-        sf.pack(fill="x", pady=(0, 16))
-        self._cleaner_dryrun = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            sf,
-            text="Dry run  (scan only — nothing will be changed)",
-            variable=self._cleaner_dryrun, text_color="#f0a500",
-        ).pack(anchor="w", padx=16, pady=14)
-
         self._cleaner_run_btn = ctk.CTkButton(
             body, text="▶  Run Content Cleaner", height=52,
             font=ctk.CTkFont(size=17, weight="bold"),
@@ -599,7 +590,6 @@ class App(ctk.CTk):
         self._cleaner_log.configure(state="normal")
         self._cleaner_log.delete("1.0", "end")
         self._cleaner_log.configure(state="disabled")
-        dry_run = self._cleaner_dryrun.get()
         q = self._log_queue
 
         def worker():
@@ -610,7 +600,7 @@ class App(ctk.CTk):
             old, sys.stdout = sys.stdout, W()
             try:
                 from content_cleaner import scan_course
-                asyncio.run(scan_course(course_url=course_url, dry_run=dry_run))
+                asyncio.run(scan_course(course_url=course_url))
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("cleaner", f"✗  {e}"))
