@@ -582,9 +582,9 @@ async def scan_course(course_url: str, dry_run: bool = False) -> None:
         """)
         content_url = nav_href or f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
         print(f"Navigating to content tab{' (from nav)' if nav_href else ' (direct URL)'}...")
-        await page.goto(content_url)
-        await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(3000)
+        await page.goto(content_url, wait_until="domcontentloaded")
+        await page.wait_for_load_state("networkidle", timeout=20000)
+        print(f"  ✓ Settled at: {page.url}")
 
         print("Fetching topic list...")
         topics = await get_all_topics(page, course_id)
