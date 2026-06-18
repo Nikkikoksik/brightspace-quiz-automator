@@ -4,6 +4,7 @@ COURSES_FILE = str(Path(__file__).parent.parent / "courses.txt")
 
 # Default settings used by the CLI (gui.py has its own checkboxes)
 SETTINGS = {
-    "set_in_gradebook": True,   # Not in Grade Book → In Grade Book
-    "set_auto_submit":  True,   # Timer expiry → Automatically submit
+    "set_in_gradebook":     True,   # Not in Grade Book → In Grade Book
+    "set_auto_submit":      True,   # Timer expiry → Automatically submit
+    "rename_moodle_titles": False,  # Rename quiz titles containing Moodle → Brightspace
 }

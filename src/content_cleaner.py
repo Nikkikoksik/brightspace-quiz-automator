@@ -18,11 +18,11 @@ from course_outline_automator import (
 )
 
 _HERE = Path(__file__).parent.parent
+_BS_PROFILE = str(_HERE / "bs_profile")
 if os.name == "nt":
     _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
 else:
     _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
-SESSION_FILE = str(_USERDATA_DIR / "session.json")
 
 SKIP_MODULES = {
     "How to Use This Blueprint",
@@ -318,23 +318,26 @@ def replace_moodle_in_title(title: str) -> tuple[str, bool]:
 
 
 _FIND_AND_SET_TITLE_JS = """
-    (newTitle) => {
-        try {
-            const input = document
-                .querySelector('d2l-activity-content-editor').shadowRoot
-                .querySelector('d2l-activity-editor').shadowRoot
-                .querySelector('d2l-activity-content-editor-detail').shadowRoot
-                .querySelector('d2l-activity-content-file-detail').shadowRoot
-                .querySelector('d2l-activity-content-editor-title').shadowRoot
-                .querySelector('d2l-input-text').shadowRoot
-                .querySelector('input');
-            if (!input) return false;
-            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-            setter.call(input, newTitle);
-            input.dispatchEvent(new Event('input', {bubbles: true}));
-            input.dispatchEvent(new Event('change', {bubbles: true}));
-            return true;
-        } catch(e) { return false; }
+    ([currentTitle, newTitle]) => {
+        function findAndSet(root) {
+            for (const el of root.querySelectorAll('input')) {
+                if (el.value === currentTitle) {
+                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    setter.call(el, newTitle);
+                    el.dispatchEvent(new Event('input', {bubbles: true}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                    return true;
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) {
+                    const r = findAndSet(el.shadowRoot);
+                    if (r) return r;
+                }
+            }
+            return false;
+        }
+        return findAndSet(document);
     }
 """
 
@@ -478,14 +481,36 @@ async def process_topic(
 
     # ── live run: write title ─────────────────────────────────────────────
     if title_changed:
-        ok = await edit_page.evaluate(_FIND_AND_SET_TITLE_JS, new_title)
+        ok = await edit_page.evaluate(_FIND_AND_SET_TITLE_JS, [title, new_title])
         if ok:
             print("    ✓ Title updated")
         else:
             print("    ✗ Title input not found — rename manually")
 
     await edit_page.wait_for_timeout(500)
-    await _save_two_pass(edit_page)
+    saved = await edit_page.evaluate("""
+        () => {
+            function walk(root) {
+                for (const el of root.querySelectorAll('button, d2l-button')) {
+                    const text = (el.textContent || '').trim();
+                    if (text === 'Save and Close') {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
+                }
+                return null;
+            }
+            return walk(document);
+        }
+    """)
+    if saved:
+        await edit_page.mouse.click(saved["x"], saved["y"])
+        await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
+    else:
+        await _save_two_pass(edit_page)
     print("    ✓ Saved")
     return changes, warnings
 
@@ -543,18 +568,54 @@ async def pre_scan_topics(page: Page, topics: list[dict]) -> list[dict]:
     return [t for t in topics if t["TopicId"] in keep_ids]
 
 
+async def _wait_for_login(page):
+    """Navigate to Brightspace, wait for user login."""
+    print("Opening Brightspace...")
+    await page.goto(BRIGHTSPACE_BASE)
+    print("─" * 50)
+    print("  Log in with your Okanagan College account.")
+    print("  Complete any MFA steps (email code, authenticator, etc.).")
+    print("  Script continues automatically once you reach the home page.")
+    print("─" * 50)
+    for i in range(180):
+        await page.wait_for_timeout(3000)
+        url = page.url
+        if "learn.okanagancollege.ca" in url and "microsoftonline.com" not in url:
+            has_login_form = await page.evaluate("() => !!document.querySelector('#userName')")
+            if has_login_form:
+                continue
+            try:
+                await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home", timeout=15000)
+                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                await page.wait_for_timeout(2000)
+            except Exception:
+                pass
+            if "/d2l/home" in page.url:
+                break
+        if i % 10 == 0 and i > 0:
+            print(f"  Still waiting... ({i * 3}s)  |  {page.url[:80]}")
+    else:
+        raise RuntimeError("Login timed out after 9 minutes")
+    print("✓ Logged in")
+    await page.wait_for_load_state("networkidle", timeout=20000)
+
+
 async def scan_course(course_url: str, dry_run: bool = False) -> None:
     """Main entry point: scan all HTML topics in a course and replace Moodle references."""
     if dry_run:
         print("⚠  DRY RUN — no changes will be saved\n")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=60, args=["--start-maximized"])
-        context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+        context = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            slow_mo=60,
+            args=["--start-maximized"],
             no_viewport=True,
         )
         page = await context.new_page()
+
+        await _wait_for_login(page)
 
         course_id = await _resolve_course_id(page, course_url)
 
@@ -655,4 +716,4 @@ async def scan_course(course_url: str, dry_run: bool = False) -> None:
             for w in all_warnings:
                 print(f"  {w.strip()}")
 
-        await browser.close()
+        await context.close()

@@ -7,15 +7,16 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200
-from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary, apply_pdf_only_file_type
+from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary, apply_pdf_only_file_type, apply_rename_title
 
 if os.name == "nt":
     _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
 else:
     _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
 
-SESSION_FILE = str(_USERDATA_DIR / "session.json")
-STATS_FILE   = str(_USERDATA_DIR / "timing_stats.json")
+SESSION_FILE  = str(_USERDATA_DIR / "session.json")
+STATS_FILE    = str(_USERDATA_DIR / "timing_stats.json")
+_BS_PROFILE   = str(Path(__file__).parent.parent / "bs_profile")
 
 
 def _print_run_summary(results: list, kind: str = "item"):
@@ -57,8 +58,8 @@ def _save_timing(course_url: str, quiz_name: str, elapsed_s: float):
         pass
 
 
-async def _wait_for_login(page, context):
-    """Navigate to Brightspace, wait for user login, save session."""
+async def _wait_for_login(page):
+    """Navigate to Brightspace, wait for user login."""
     print("Opening Brightspace...")
     await page.goto("https://learn.okanagancollege.ca")
     print("─" * 50)
@@ -85,35 +86,37 @@ async def _wait_for_login(page, context):
             print(f"  Still waiting... ({i * 3}s)  |  {page.url[:80]}")
     else:
         raise RuntimeError("Login timed out after 9 minutes")
-    print("✓ Logged in — saving session...")
+    print("✓ Logged in")
     await page.wait_for_load_state("networkidle", timeout=20000)
-    await context.storage_state(path=SESSION_FILE)
-    print("✓ Session saved")
 
 
 async def run_bs_login():
-    """Standalone: open Brightspace, wait for login, save session. Used by Settings panel."""
+    """Standalone: open Brightspace, wait for login. Used by Settings panel."""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
-        context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+        context = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            slow_mo=80,
+            args=["--start-maximized"],
             no_viewport=True,
         )
         page = await context.new_page()
-        await _wait_for_login(page, context)
-        await browser.close()
+        await _wait_for_login(page)
+        await context.close()
 
 
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
-        context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+        context = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            slow_mo=80,
+            args=["--start-maximized"],
             no_viewport=True,
         )
         page = await context.new_page()
 
-        await _wait_for_login(page, context)
+        await _wait_for_login(page)
 
         for raw_url in urls:
             print(f"\n{'─' * 50}")
@@ -133,7 +136,6 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                 pass
             await page.wait_for_url("**/quizzing/**", timeout=60000)
             await page.wait_for_load_state("networkidle")
-            await context.storage_state(path=SESSION_FILE)
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
@@ -168,6 +170,8 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                     "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
                 )
                 await open_quiz_edit(page, name)
+                if settings.get("rename_moodle_titles"):
+                    await apply_rename_title(page, name, dry_run)
                 if settings.get("set_in_gradebook"):
                     await apply_gradebook(page, dry_run)
                 if settings.get("set_auto_submit"):
@@ -198,20 +202,22 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             await maybe_rename_staged(page, rename_fn)
         if review_fn:
             review_fn()
-        await browser.close()
+        await context.close()
 
 
 async def run_verify(urls: list[str]):
     """Read-only pass: open every quiz and report current gradebook + timer settings."""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
-        context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+        context = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            slow_mo=80,
+            args=["--start-maximized"],
             no_viewport=True,
         )
         page = await context.new_page()
 
-        await _wait_for_login(page, context)
+        await _wait_for_login(page)
 
         for raw_url in urls:
             print(f"\n{'─' * 50}")
@@ -262,20 +268,22 @@ async def run_verify(urls: list[str]):
             print(f"\n{'─' * 50}")
             print("✓ Verify complete —", "all settings OK" if all_ok else "some quizzes need attention (see above)")
 
-        await browser.close()
+        await context.close()
 
 
 async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, limit: int | None = None):
     """Re-run only the auto-submit timer fix on quizzes (no gradebook)."""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
-        context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
+        context = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            slow_mo=80,
+            args=["--start-maximized"],
             no_viewport=True,
         )
         page = await context.new_page()
 
-        await _wait_for_login(page, context)
+        await _wait_for_login(page)
 
         for course_url in urls:
             print(f"\n{'─' * 50}")
@@ -338,22 +346,21 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, limit: int 
 
         print(f"\n{'─' * 50}")
         print("✓  All done!")
-        await browser.close()
+        await context.close()
 
 
 async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None):
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False, slow_mo=80,
+        context = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            slow_mo=80,
             args=["--start-maximized"],
-        )
-        context = await browser.new_context(
-            storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
             no_viewport=True,
         )
         page = await context.new_page()
 
-        await _wait_for_login(page, context)
+        await _wait_for_login(page)
 
         for raw_url in urls:
             print(f"\n{'─' * 50}")
@@ -430,4 +437,4 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             await maybe_rename_staged(page, rename_fn)
         if review_fn:
             review_fn()
-        await browser.close()
+        await context.close()

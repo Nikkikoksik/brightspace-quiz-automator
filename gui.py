@@ -414,12 +414,15 @@ class App(ctk.CTk):
 
         self._gradebook_var  = ctk.BooleanVar(value=True)
         self._autosubmit_var = ctk.BooleanVar(value=True)
+        self._rename_var     = ctk.BooleanVar(value=False)
         self._quiz_dryrun    = ctk.BooleanVar(value=False)
 
         ctk.CTkCheckBox(sf, text="Add to Grade Book",
                         variable=self._gradebook_var).pack(anchor="w", padx=16, pady=(14, 4))
         ctk.CTkCheckBox(sf, text="Auto-submit on timer expiry",
                         variable=self._autosubmit_var).pack(anchor="w", padx=16, pady=4)
+        ctk.CTkCheckBox(sf, text="Rename Moodle → Brightspace in quiz titles",
+                        variable=self._rename_var).pack(anchor="w", padx=16, pady=4)
         ctk.CTkCheckBox(sf, text="Dry run  (preview only — nothing will be saved)",
                         variable=self._quiz_dryrun,
                         text_color="#f0a500").pack(anchor="w", padx=16, pady=(4, 14))
@@ -1153,8 +1156,9 @@ class App(ctk.CTk):
         self._quiz_log.delete("1.0", "end")
         self._quiz_log.configure(state="disabled")
         settings = {
-            "set_in_gradebook": self._gradebook_var.get(),
-            "set_auto_submit":  self._autosubmit_var.get(),
+            "set_in_gradebook":     self._gradebook_var.get(),
+            "set_auto_submit":      self._autosubmit_var.get(),
+            "rename_moodle_titles": self._rename_var.get(),
         }
         dry_run = self._quiz_dryrun.get()
         ask_fn  = self._make_ask_fn()
@@ -1388,8 +1392,9 @@ class App(ctk.CTk):
         self._quiz_log.delete("1.0", "end")
         self._quiz_log.configure(state="disabled")
         settings = {
-            "set_in_gradebook": self._gradebook_var.get(),
-            "set_auto_submit":  self._autosubmit_var.get(),
+            "set_in_gradebook":     self._gradebook_var.get(),
+            "set_auto_submit":      self._autosubmit_var.get(),
+            "rename_moodle_titles": self._rename_var.get(),
         }
         dry_run = self._quiz_dryrun.get()
         ask_fn  = self._make_ask_fn()

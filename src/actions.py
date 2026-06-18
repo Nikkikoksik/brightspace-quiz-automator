@@ -1,4 +1,45 @@
+import re
+
 from playwright.async_api import Page
+
+
+async def apply_rename_title(page: Page, current_name: str, dry_run: bool) -> None:
+    """Rename quiz title if it contains 'Moodle', replacing with 'Brightspace' (case-preserving)."""
+    def _replace(m):
+        w = m.group(0)
+        if w == w.upper(): return "BRIGHTSPACE"
+        if w[0].isupper(): return "Brightspace"
+        return "brightspace"
+
+    new_name = re.sub(r"\bmoodle\b", _replace, current_name, flags=re.IGNORECASE)
+    if new_name == current_name:
+        return
+
+    if dry_run:
+        print(f"    Rename    : [DRY RUN] '{current_name}' → '{new_name}'")
+        return
+
+    ok = await page.evaluate("""
+        (newTitle) => {
+            try {
+                const editor = document.querySelector('d2l-activity-quiz-editor');
+                const detail = editor?.shadowRoot?.querySelector('d2l-activity-quiz-editor-detail');
+                const inputText = detail?.shadowRoot?.querySelector('d2l-input-text');
+                const input = inputText?.shadowRoot?.querySelector('input');
+                if (!input) return false;
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                setter.call(input, newTitle);
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+                return true;
+            } catch(e) { return false; }
+        }
+    """, new_name)
+
+    if ok:
+        print(f"    Rename    : ✓ '{current_name}' → '{new_name}'")
+    else:
+        print(f"    Rename    : ✗ title input not found")
 
 
 async def _set_points_if_zero(page: Page):
