@@ -509,9 +509,9 @@ async def process_topic(
     if saved:
         await edit_page.mouse.click(saved["x"], saved["y"])
         await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
+        print("    ✓ Saved")
     else:
         await _save_two_pass(edit_page)
-    print("    ✓ Saved")
     return changes, warnings
 
 
