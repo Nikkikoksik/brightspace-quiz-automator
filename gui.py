@@ -35,6 +35,7 @@ STAGING_DONE_FILE   = str(USERDATA_DIR / "staging_done.json")
 STAGING_QUEUE_FILE  = str(USERDATA_DIR / "staging_queue.txt")
 SESSION_FILE_GUI    = str(USERDATA_DIR / "session.json")
 COURSE_HISTORY_FILE = str(USERDATA_DIR / "course_history.json")
+_BS_PROFILE         = str(Path(__file__).parent / "bs_profile")
 
 
 def _migrate_userdata():
@@ -774,12 +775,12 @@ class App(ctk.CTk):
         bf = ctk.CTkFrame(body)
         bf.pack(fill="x", pady=(0, 16))
 
-        session_exists = os.path.exists(SESSION_FILE_GUI)
+        profile_exists = os.path.isdir(_BS_PROFILE) and bool(os.listdir(_BS_PROFILE))
         self._bs_status = ctk.CTkLabel(
             bf,
-            text="✓  Session saved" if session_exists else "✗  No session — log in first",
+            text="✓  Session saved" if profile_exists else "✗  No session — log in first",
             font=ctk.CTkFont(size=12),
-            text_color="#4caf50" if session_exists else "#f0a500",
+            text_color="#4caf50" if profile_exists else "#f0a500",
             justify="left",
         )
         self._bs_status.pack(anchor="w", padx=16, pady=(14, 8))
@@ -878,9 +879,9 @@ class App(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _clear_bs_session(self):
-        session_file = SESSION_FILE_GUI
-        if os.path.exists(session_file):
-            os.remove(session_file)
+        import shutil
+        if os.path.exists(_BS_PROFILE):
+            shutil.rmtree(_BS_PROFILE)
         self._bs_status.configure(text="✗  No session — log in first", text_color="#f0a500")
 
     def _save_settings(self):
@@ -1721,9 +1722,8 @@ class App(ctk.CTk):
 
             async def run():
                 async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
-                    context = await browser.new_context(
-                        storage_state=SESSION_FILE_GUI if os.path.exists(SESSION_FILE_GUI) else None
+                    context = await p.chromium.launch_persistent_context(
+                        _BS_PROFILE, headless=True,
                     )
                     page = await context.new_page()
                     await page.goto(val)
@@ -1758,7 +1758,7 @@ class App(ctk.CTk):
                     # Fall back: search the visible page text
                     text = await page.title()
                     text += " " + await page.evaluate("document.body.innerText")
-                    await browser.close()
+                    await context.close()
                     return text
 
             try:
