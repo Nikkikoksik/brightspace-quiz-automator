@@ -13,10 +13,11 @@ if os.name == "nt":
     _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
 else:
     _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
+_USERDATA_DIR.mkdir(parents=True, exist_ok=True)
 
 SESSION_FILE  = str(_USERDATA_DIR / "session.json")
 STATS_FILE    = str(_USERDATA_DIR / "timing_stats.json")
-_BS_PROFILE   = str(Path(__file__).parent.parent / "bs_profile")
+_BS_PROFILE   = str(_USERDATA_DIR / "bs_profile")
 
 
 def _print_run_summary(results: list, kind: str = "item"):

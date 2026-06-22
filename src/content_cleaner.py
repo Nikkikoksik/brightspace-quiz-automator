@@ -17,8 +17,11 @@ from course_outline_automator import (
     _save_two_pass,
 )
 
-_HERE = Path(__file__).parent.parent
-_BS_PROFILE = str(_HERE / "bs_profile")
+if os.name == "nt":
+    _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
+else:
+    _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
+_BS_PROFILE = str(_USERDATA_DIR / "bs_profile")
 if os.name == "nt":
     _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
 else:

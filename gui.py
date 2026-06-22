@@ -35,7 +35,7 @@ STAGING_DONE_FILE   = str(USERDATA_DIR / "staging_done.json")
 STAGING_QUEUE_FILE  = str(USERDATA_DIR / "staging_queue.txt")
 SESSION_FILE_GUI    = str(USERDATA_DIR / "session.json")
 COURSE_HISTORY_FILE = str(USERDATA_DIR / "course_history.json")
-_BS_PROFILE         = str(Path(__file__).parent / "bs_profile")
+_BS_PROFILE         = str(USERDATA_DIR / "bs_profile")
 
 
 def _migrate_userdata():
