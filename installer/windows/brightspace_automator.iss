@@ -35,8 +35,8 @@ Filename: "{app}\python\python.exe"; Parameters: "-m pip install --quiet customt
 Filename: "{app}\python\python.exe"; Parameters: "-m playwright install chromium"; StatusMsg: "Installing Chromium browser (one-time, ~3 min)..."
 
 [Icons]
-Name: "{userdesktop}\Brightspace Automator"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\gui.py"""; IconFilename: "{app}\icon.ico"; WorkingDir: "{app}"
-Name: "{group}\Brightspace Automator"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\gui.py"""; IconFilename: "{app}\icon.ico"; WorkingDir: "{app}"
+Name: "{userdesktop}\Brightspace Automator"; Filename: "{app}\python\python.exe"; Parameters: """{app}\gui.py"""; IconFilename: "{app}\icon.ico"; WorkingDir: "{app}"
+Name: "{group}\Brightspace Automator"; Filename: "{app}\python\python.exe"; Parameters: """{app}\gui.py"""; IconFilename: "{app}\icon.ico"; WorkingDir: "{app}"
 Name: "{group}\Uninstall"; Filename: "{uninstallexe}"
 
 [UninstallDelete]
