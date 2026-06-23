@@ -31,7 +31,7 @@ Source: "python-3.12.10-amd64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Filename: "{tmp}\python-3.12.10-amd64.exe"; Parameters: "/quiet InstallAllUsers=0 TargetDir=""{app}\python"" PrependPath=0"; StatusMsg: "Installing Python..."
 
 ; 2. pip install all dependencies
-Filename: "{app}\python\python.exe"; Parameters: "-m pip install --quiet customtkinter playwright pdf2docx watchdog"; StatusMsg: "Installing packages..."; Flags: runhidden
+Filename: "{app}\python\python.exe"; Parameters: "-m pip install --quiet -r ""{app}\requirements.txt"""; StatusMsg: "Installing packages..."; Flags: runhidden
 
 ; 3. Download Chromium (first time only — ~180MB, takes ~2 min)
 Filename: "{app}\python\python.exe"; Parameters: "-m playwright install chromium"; StatusMsg: "Installing Chromium browser (one-time, ~3 min)..."
