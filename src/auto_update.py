@@ -103,7 +103,11 @@ def cleanup():
                 path.unlink(missing_ok=True)
 
 
-def main():
+def main(ask_restart_fn=None):
+    """
+    ask_restart_fn: optional callable that shows a dialog and returns True to restart.
+    If None, falls back to a terminal prompt (CLI mode).
+    """
     if (HERE / ".git").exists():
         print("Git checkout detected — skipping auto-update (use git pull instead)")
         return
@@ -117,6 +121,12 @@ def main():
 
     local_sha = get_local_sha()
 
+    if not local_sha:
+        # Fresh install — record current SHA so we don't re-download on next launch
+        VERSION.write_text(remote_sha)
+        print("  Fresh install — version recorded, no update needed")
+        return
+
     if remote_sha == local_sha:
         print("  Already up to date")
         return
@@ -125,11 +135,15 @@ def main():
     if download_and_extract(remote_sha):
         cleanup()
         print("  ✓ Updated successfully.")
-        ans = input("  Restart now to apply the update? (y/n): ").strip().lower()
-        if ans == "y":
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+        if ask_restart_fn is not None:
+            if ask_restart_fn():
+                os.execv(sys.executable, [sys.executable] + sys.argv)
         else:
-            print("  Skipping restart — update will apply next launch.")
+            ans = input("  Restart now to apply the update? (y/n): ").strip().lower()
+            if ans == "y":
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            else:
+                print("  Skipping restart — update will apply next launch.")
     else:
         print("  Update failed — running current version")
         cleanup()

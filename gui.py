@@ -187,6 +187,7 @@ class App(ctk.CTk):
         self._load_config()
         self._load_notes()
         self.after(100, self._poll_log)
+        self.after(1500, self._run_auto_update)
 
     # ── Layout helpers ────────────────────────────────────────────────────────
 
@@ -1027,6 +1028,22 @@ class App(ctk.CTk):
         box.insert("end", text + "\n")
         box.see("end")
         box.configure(state="disabled")
+
+    def _run_auto_update(self):
+        def ask_restart():
+            return messagebox.askyesno(
+                "Update Applied",
+                "Brightspace Automator was updated.\nRestart now to apply changes?",
+            )
+
+        def worker():
+            try:
+                from auto_update import main as run_update
+                run_update(ask_restart_fn=ask_restart)
+            except Exception as e:
+                print(f"Auto-update error: {e}")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _poll_log(self):
         try:
@@ -1962,7 +1979,25 @@ class App(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
 
+def _check_playwright():
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            exe = p.chromium.executable_path
+        if not Path(exe).exists():
+            messagebox.showerror(
+                "Browser Not Installed",
+                "Chromium was not installed correctly.\n\n"
+                "Please reinstall Brightspace Automator, or open a terminal and run:\n"
+                "    python -m playwright install chromium"
+            )
+            sys.exit(1)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     if sys.platform == "win32":
         sys.stdout.reconfigure(encoding="utf-8")
+    _check_playwright()
     App().mainloop()
