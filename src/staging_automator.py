@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Staging Automator — Step-by-step Brightspace staging process.
 Each step is a standalone async function; run_step1 handles Step 1.
@@ -26,7 +26,7 @@ BS_BASE = "https://learn.okanagancollege.ca"
 
 def _extract_ou(href: str) -> str | None:
     """Extract org-unit ID from /d2l/home/{ou} or full URL."""
-    m = re.search(r'/d2l/home/(\d+)', href)
+    m = re.search(r'/d2l/(?:home|le/[^/]+)/(\d+)', href)
     return m.group(1) if m else None
 
 
@@ -177,7 +177,7 @@ async def maybe_rename_staged(page, popup_fn) -> bool:
             return False
 
         new_title = title.replace("_Staged", "_Ready")
-        m = re.search(r'/d2l/home/(\d+)', href)
+        m = re.search(r'/d2l/(?:home|le/[^/]+)/(\d+)', href)
         if not m:
             print("  ⚠ Could not extract OU from nav link — skipping rename")
             return False
@@ -365,9 +365,9 @@ async def run_step2(course_input: str, dry_run: bool = False):
 async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None, note_fn=None):
     """
     Steps 1 + 2 in a single browser session.
-    Hides the blueprint module automatically, then leaves the browser open
-    for the user to select the source course and click Copy Components.
-    After step 2, optionally continues through Quiz, Assignment, and Course Outline automators.
+    Hides the blueprint module automatically, then pauses for the user to complete
+    copy-components. Optionally continues through Quiz, Assignment, and Course Outline
+    automators in the same browser. Browser stays open for review at the end.
     prompt_fn: callable(str) -> str  (defaults to built-in input)
     note_fn:   callable(str)         (called when a note should be added to the Notes tab)
     """
@@ -390,6 +390,8 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
             return
 
         print(f"  OU: {ou}")
+        course_url = f"{BS_BASE}/d2l/home/{ou}"
+        loop = asyncio.get_running_loop()
 
         # --- Step 1 ---
         content_url = f"{BS_BASE}/d2l/le/content/{ou}/Home"
@@ -418,52 +420,53 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
         print("   4. Click 'Select All Components', then unselect 'Grades' and 'Grade Settings'")
         print("   5. Click 'Continue'")
         print("   6. Click 'Finish'")
-        print("   7. Close the browser when done")
         print("─" * 50)
 
-        await page.wait_for_event("close", timeout=0)
+        await loop.run_in_executor(None, _prompt, "Complete copy-components in the browser, then click OK to continue...")
         print("✓ Steps 1 + 2 complete")
 
-    # Ask about quizzes outside the playwright context so a new session can open
-    course_url = f"{BS_BASE}/d2l/home/{ou}"
-    loop = asyncio.get_event_loop()
+        # Navigate to course home so the browser looks active — prevents user from closing it
+        # while quiz/assignment automators run in their own separate windows.
+        print("  Navigating staging browser to course home — keep this window open until all steps complete.")
+        try:
+            await page.goto(course_url, wait_until="domcontentloaded")
+        except Exception:
+            pass
 
-    def _review_fn(label):
+        def _review_fn(label):
+            print(f"\n{'─' * 50}")
+            print(f"✋ {label} done — review any missed items, then continue.")
+            print("─" * 50)
+            _prompt("Press OK when you are done reviewing…")
+
+        answer = await loop.run_in_executor(None, _prompt, "Continue with Quiz Automator? (y/n): ")
+        if answer.strip().lower() in ("y", "yes"):
+            print("\nStarting Quiz Automator...")
+            from browser import run as run_quiz
+            settings = {"set_in_gradebook": True, "set_auto_submit": True}
+            await run_quiz([course_url], dry_run=dry_run, settings=settings,
+                           review_fn=lambda: _review_fn("Quiz Automator"))
+
+        answer = await loop.run_in_executor(None, _prompt, "Continue with Assignment Automator? (y/n): ")
+        if answer.strip().lower() in ("y", "yes"):
+            print("\nStarting Assignment Automator...")
+            from browser import run_assignments
+            settings = {"set_in_gradebook": True}
+            await run_assignments([course_url], dry_run=dry_run, settings=settings,
+                                  review_fn=lambda: _review_fn("Assignment Automator"))
+
+        answer = await loop.run_in_executor(None, _prompt, "Continue with Course Outline? (y/n): ")
+        if answer.strip().lower() in ("y", "yes"):
+            print("\nStarting Course Outline Automator...")
+            from course_outline_automator import run as run_outline
+            outline_page = await context.new_page()
+            await run_outline(dry_run=dry_run, course_url=course_url, prompt_fn=_prompt, context=context, page=outline_page)
+
         print(f"\n{'─' * 50}")
-        print(f"✋ {label} done — browser is still open.")
-        print("   Review any missed items, make manual corrections, then close the browser.")
+        print("✓ All staging steps complete.")
+        print("  Review the result in the browser, then click OK to close.")
         print("─" * 50)
-        _prompt("Press Enter when you are done reviewing…")
-
-    answer = await loop.run_in_executor(None, _prompt, "Continue with Quiz Automator? (y/n): ")
-    if answer.strip().lower() in ("y", "yes"):
-        print("\nStarting Quiz Automator...")
-        from browser import run as run_quiz
-        settings = {"set_in_gradebook": True, "set_auto_submit": True}
-        await run_quiz([course_url], dry_run=dry_run, settings=settings,
-                       review_fn=lambda: _review_fn("Quiz Automator"))
-
-    answer = await loop.run_in_executor(None, _prompt, "Continue with Assignment Automator? (y/n): ")
-    if answer.strip().lower() in ("y", "yes"):
-        print("\nStarting Assignment Automator...")
-        from browser import run_assignments
-        settings = {"set_in_gradebook": True}
-        await run_assignments([course_url], dry_run=dry_run, settings=settings,
-                              review_fn=lambda: _review_fn("Assignment Automator"))
-
-    answer = await loop.run_in_executor(None, _prompt, "Continue with Course Outline? (y/n): ")
-    if answer.strip().lower() in ("y", "yes"):
-        print("\nStarting Course Outline Automator...")
-        from course_outline_automator import run as run_outline
-        await run_outline(dry_run=dry_run, course_url=course_url, prompt_fn=_prompt)
-
-        answer = await loop.run_in_executor(None, _prompt, "Was the course outline found? (y/n): ")
-        if answer.strip().lower() not in ("y", "yes"):
-            _note("No syllabus present in course shell - syllabus not applied to syllabus template. Gradebook not set up.")
-        else:
-            answer = await loop.run_in_executor(None, _prompt, "Were there grade categories in the gradebook? (y/n): ")
-            if answer.strip().lower() not in ("y", "yes"):
-                _note("Grade items present in gradebook so made one category weighted 100% and all items have been placed in this category")
+        await loop.run_in_executor(None, _prompt, "Click OK to close the browser when done reviewing...")
 
 
 if __name__ == "__main__":

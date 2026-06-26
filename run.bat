@@ -18,10 +18,10 @@ if "%PY%"=="" (
 )
 
 :: Install dependencies if missing
-%PY% -c "import customtkinter" >nul 2>&1
+%PY% -c "import PyQt6" >nul 2>&1
 if errorlevel 1 (
     echo Installing dependencies...
-    %PY% -m pip install customtkinter playwright pdf2docx watchdog mammoth sentry-sdk
+    %PY% -m pip install PyQt6 playwright pdf2docx watchdog mammoth sentry-sdk
 )
 %PY% -c "import watchdog" >nul 2>&1
 if errorlevel 1 %PY% -m pip install watchdog
@@ -46,5 +46,5 @@ powershell -NoProfile -Command "$desk = [Environment]::GetFolderPath('Desktop');
 %PY% src\auto_update.py
 
 :: Launch
-%PY% dev.py
+%PY% gui_pyqt6.py
 pause
