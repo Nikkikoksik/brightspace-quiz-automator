@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import os
 import queue
@@ -786,6 +786,12 @@ class App(QMainWindow):
         self._section_label(layout, "BRIGHTSPACE SESSION")
         bs_frame = QFrame(); bs_frame.setStyleSheet(_card())
         bs_layout = QVBoxLayout(bs_frame); bs_layout.setContentsMargins(16, 16, 16, 16); bs_layout.setSpacing(8)
+        bs_layout.addWidget(QLabel("Username"))
+        self._bs_username = QLineEdit(); self._bs_username.setFixedHeight(36); self._bs_username.setStyleSheet(_entry_style())
+        bs_layout.addWidget(self._bs_username)
+        bs_layout.addWidget(QLabel("Password"))
+        self._bs_password = QLineEdit(); self._bs_password.setFixedHeight(36); self._bs_password.setEchoMode(QLineEdit.EchoMode.Password); self._bs_password.setStyleSheet(_entry_style())
+        bs_layout.addWidget(self._bs_password)
         session_exists = os.path.exists(SESSION_FILE_GUI)
         self._bs_status = QLabel("✓  Session saved" if session_exists else "✗  No session — log in first")
         self._bs_status.setStyleSheet(f"color: {T['success'] if session_exists else T['warn']}; font-size: 12px;")
@@ -887,15 +893,17 @@ class App(QMainWindow):
         try:
             with open(OUTLINE_CFG) as f:
                 cfg = json.load(f)
-            if cfg.get("course_url"): self._outline_url.setText(cfg["course_url"])
-            if cfg.get("cb_email"):   self._cb_email.setText(cfg["cb_email"])
-            if cfg.get("cb_password"):self._cb_password.setText(cfg["cb_password"])
-            if cfg.get("sentry_dsn"): self._sentry_dsn.setText(cfg["sentry_dsn"]); _init_sentry(cfg["sentry_dsn"])
+            if cfg.get("course_url"):  self._outline_url.setText(cfg["course_url"])
+            if cfg.get("cb_email"):    self._cb_email.setText(cfg["cb_email"])
+            if cfg.get("cb_password"): self._cb_password.setText(cfg["cb_password"])
+            if cfg.get("bs_username"): self._bs_username.setText(cfg["bs_username"])
+            if cfg.get("bs_password"): self._bs_password.setText(cfg["bs_password"])
+            if cfg.get("sentry_dsn"):  self._sentry_dsn.setText(cfg["sentry_dsn"]); _init_sentry(cfg["sentry_dsn"])
             else: _init_sentry()
         except (FileNotFoundError, json.JSONDecodeError):
             _init_sentry()
 
-    def _save_config(self, course_url=None, email=None, password=None, sentry_dsn=None):
+    def _save_config(self, course_url=None, email=None, password=None, sentry_dsn=None, bs_username=None, bs_password=None):
         try:
             with open(OUTLINE_CFG) as f: cfg = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
@@ -904,6 +912,8 @@ class App(QMainWindow):
         if email       is not None: cfg["cb_email"]      = email
         if password    is not None: cfg["cb_password"]   = password
         if sentry_dsn  is not None: cfg["sentry_dsn"]   = sentry_dsn
+        if bs_username is not None: cfg["bs_username"]   = bs_username
+        if bs_password is not None: cfg["bs_password"]   = bs_password
         with open(OUTLINE_CFG, "w") as f: json.dump(cfg, f)
 
     def _load_notes(self):
@@ -936,7 +946,13 @@ class App(QMainWindow):
 
     def _save_settings(self):
         dsn = self._sentry_dsn.text().strip()
-        self._save_config(email=self._cb_email.text().strip(), password=self._cb_password.text().strip(), sentry_dsn=dsn)
+        self._save_config(
+            email=self._cb_email.text().strip(),
+            password=self._cb_password.text().strip(),
+            sentry_dsn=dsn,
+            bs_username=self._bs_username.text().strip(),
+            bs_password=self._bs_password.text().strip(),
+        )
         _init_sentry(dsn)
         self._save_settings_btn.setText("✓  Saved")
         QTimer.singleShot(1500, lambda: self._save_settings_btn.setText("Save Settings"))
@@ -1117,21 +1133,55 @@ class App(QMainWindow):
         def worker():
             from playwright.async_api import async_playwright
             import re as _re
+            import json as _json
+            from urllib.parse import urlparse
             async def run():
                 async with async_playwright() as p:
                     browser = await p.chromium.launch(headless=True)
                     ctx = await browser.new_context(storage_state=SESSION_FILE_GUI if os.path.exists(SESSION_FILE_GUI) else None)
-                    page = await ctx.new_page(); await page.goto(val)
-                    await page.wait_for_load_state("domcontentloaded"); await page.wait_for_timeout(1500)
+                    page = await ctx.new_page()
+                    await page.goto(val)
+                    await page.wait_for_load_state("domcontentloaded")
+                    await page.wait_for_timeout(1500)
+                    # For /d2l/home/{id} URLs, try LP API first — returns full course code as JSON
+                    home_m = _re.search(r'/d2l/(?:home|le/[^/]+)/(\d+)', val)
+                    if home_m:
+                        parsed = urlparse(val)
+                        base = f"{parsed.scheme}://{parsed.netloc}"
+                        org_id = home_m.group(1)
+                        api_url = f"{base}/d2l/api/lp/1.9/courses/{org_id}"
+                        try:
+                            resp = await page.evaluate(f"""
+                                async () => {{
+                                    const r = await fetch('{api_url}');
+                                    if (r.ok) return await r.text();
+                                    return null;
+                                }}
+                            """)
+                            if resp:
+                                data = _json.loads(resp)
+                                code = data.get("Code", "")
+                                if code:
+                                    await browser.close()
+                                    return code
+                        except Exception:
+                            pass
                     text = await page.title() + " " + await page.evaluate("document.body.innerText")
-                    await browser.close(); return text
+                    await browser.close()
+                    return text
             try:
                 text = asyncio.run(run())
                 m = _re.search(r'[A-Z][A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-(\d+)\.\d+', text)
                 if m:
-                    crn = m.group(1); QTimer.singleShot(0, lambda: self._staging_crn.setText(crn))
+                    crn = m.group(1)
+                    QTimer.singleShot(0, lambda: self._staging_crn.setText(crn))
                     q.put(("staging", f"✓  Extracted CRN: {crn}"))
-                else: q.put(("staging", "⚠  Could not find a course code on that page."))
+                else:
+                    import re as _re2
+                    if _re2.search(r'/d2l/(?:home|le/[^/]+)/\d+', val):
+                        q.put(("staging", "ℹ  No CRN on this page — URL will be used directly."))
+                    else:
+                        q.put(("staging", "⚠  Could not find a course code on that page."))
             except Exception as e: q.put(("staging", f"✗  {e}"))
             finally: self._crn_extracting = False
         threading.Thread(target=worker, daemon=True).start()
@@ -1139,7 +1189,6 @@ class App(QMainWindow):
     def _start_staging_steps_1_2(self):
         crn = self._staging_crn.text().strip()
         if not crn: self._log_append(self._staging_log, "⚠  Enter a CRN or URL."); return
-        if crn.startswith("http"): self._log_append(self._staging_log, "⏳  Extracting CRN from URL…"); self._auto_extract_crn(); return
         self._staging_steps12_btn.setEnabled(False); self._staging_steps12_btn.setText("Running…")
         self._staging_log.clear(); dry_run = self._staging_dryrun.isChecked(); q = self._log_queue
         bridge = self._bridge

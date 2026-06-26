@@ -16,6 +16,16 @@ else:
 
 SESSION_FILE = str(_USERDATA_DIR / "session.json")
 STATS_FILE   = str(_USERDATA_DIR / "timing_stats.json")
+_OUTLINE_CFG = _USERDATA_DIR / "outline_config.json"
+
+
+def _load_bs_credentials():
+    try:
+        with open(_OUTLINE_CFG) as f:
+            cfg = json.load(f)
+        return cfg.get("bs_username", ""), cfg.get("bs_password", "")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return "", ""
 
 
 def _print_run_summary(results: list, kind: str = "item"):
@@ -58,21 +68,35 @@ def _save_timing(course_url: str, quiz_name: str, elapsed_s: float):
 
 
 async def _wait_for_login(page, context):
-    """Navigate to Brightspace, wait for user login, save session."""
+    """Navigate to Brightspace, auto-login if credentials saved, then save session."""
     print("Opening Brightspace...")
     await page.goto("https://learn.okanagancollege.ca")
-    print("─" * 50)
-    print("  Log in with your Okanagan College account.")
-    print("  Complete any MFA steps (email code, authenticator, etc.).")
-    print("  Script continues automatically once you reach the home page.")
-    print("─" * 50)
+    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+
+    bs_user, bs_pass = _load_bs_credentials()
+    has_login_form = bool(await page.locator("input[name='userName']").count() or await page.locator("text=Manual Login").count())
+    if bs_user and bs_pass and has_login_form:
+        try:
+            print("  Auto-login: expanding Manual Login form...")
+            await page.locator("text=Manual Login").click()
+            await page.wait_for_timeout(800)
+            await page.locator("input[name='userName']").fill(bs_user)
+            await page.locator("input[name='password']").fill(bs_pass)
+            await page.locator("button:has-text('Log In')").click()
+            print("  Credentials submitted — waiting for redirect...")
+        except Exception as e:
+            print(f"  Auto-login failed ({e}) — please log in manually in the browser")
+    else:
+        if not bs_user:
+            print("─" * 50)
+            print("  No credentials saved. Log in manually in the browser.")
+            print("  Save credentials in Settings to enable auto-login.")
+            print("─" * 50)
+
     for i in range(180):
         await page.wait_for_timeout(3000)
         url = page.url
-        if "learn.okanagancollege.ca" in url and "microsoftonline.com" not in url:
-            has_login_form = await page.evaluate("() => !!document.querySelector('#userName')")
-            if has_login_form:
-                continue
+        if "learn.okanagancollege.ca" in url and "/d2l/login" not in url and "microsoftonline.com" not in url:
             try:
                 await page.goto("https://learn.okanagancollege.ca/d2l/home", timeout=15000)
                 await page.wait_for_load_state("domcontentloaded", timeout=10000)
