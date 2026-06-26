@@ -11,7 +11,6 @@ import asyncio
 import argparse
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -25,7 +24,7 @@ from playwright.async_api import async_playwright, Page
 
 # ── Config defaults (overridable via run() parameters or GUI) ─────────────────
 BRIGHTSPACE_BASE      = "https://learn.okanagancollege.ca"
-COURSEBRIDGE_URL      = "https://lms.harshsaw.ca/content-converter"
+COURSEBRIDGE_URL      = "https://coursebridge.okanagancollege.app/content-converter"
 COURSEBRIDGE_EMAIL    = ""
 COURSEBRIDGE_PASSWORD = ""
 OUTLINE_SEARCH_TERMS  = ["outline"]
@@ -90,14 +89,36 @@ def _find_btn(btns, exact=None, contains=None, exclude=None):
 # ── Login helper ───────────────────────────────────────────────────────────────
 
 async def _wait_for_bs_login(page, context):
-    """Navigate to Brightspace, wait for user login, save session."""
+    """Navigate to Brightspace, auto-login if credentials saved, then save session."""
+    import json as _json
     print("Opening Brightspace...")
     await page.goto(BRIGHTSPACE_BASE)
-    print("─" * 50)
-    print("  Log in with your Okanagan College account.")
-    print("  Complete any MFA steps (email code, authenticator, etc.).")
-    print("  Script continues automatically once you reach the home page.")
-    print("─" * 50)
+    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    try:
+        _cfg_path = Path(os.environ.get("APPDATA", Path.home())) / "BrightspaceAutomator" / "outline_config.json"
+        with open(str(_cfg_path)) as _f:
+            _cfg = _json.load(_f)
+        bs_user, bs_pass = _cfg.get("bs_username", ""), _cfg.get("bs_password", "")
+    except Exception:
+        bs_user, bs_pass = "", ""
+    has_login_form = bool(await page.locator("input[name='userName']").count() or await page.locator("text=Manual Login").count())
+    if bs_user and bs_pass and has_login_form:
+        try:
+            print("  Auto-login: expanding Manual Login form...")
+            await page.locator("text=Manual Login").click()
+            await page.wait_for_timeout(800)
+            await page.locator("input[name='userName']").fill(bs_user)
+            await page.locator("input[name='password']").fill(bs_pass)
+            await page.locator("button:has-text('Log In')").click()
+            print("  Credentials submitted — waiting for redirect...")
+        except Exception as e:
+            print(f"  Auto-login failed ({e}) — please log in manually in the browser")
+    else:
+        if not bs_user:
+            print("─" * 50)
+            print("  No credentials saved. Log in manually in the browser.")
+            print("  Save credentials in Settings to enable auto-login.")
+            print("─" * 50)
     for i in range(180):
         await page.wait_for_timeout(3000)
         url = page.url
@@ -169,11 +190,13 @@ async def _fetch_matching_topics(page: Page, course_id: str) -> list[tuple[str, 
 
 
 async def _try_download_candidate(page: Page, title: str, url: str, download_dir: Path, prompt_fn) -> "Path | None":
-    """Navigate to one candidate topic, ask user to confirm, download it. Returns path or None."""
-    print(f"  Opening: {title}...")
+    """Confirm by title, then download. Returns path or None if skipped."""
+    answer = prompt_fn(f'Found: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
+    if answer != "y":
+        print(f"  Skipping '{title}'...")
+        return None
 
-    # Some topics are direct file links (.docx/.pdf) — goto raises "Download is starting".
-    # For these, download silently first then preview in a browser tab before confirming.
+    print(f"  Downloading: {title}...")
     direct_download = False
     try:
         await page.goto(url)
@@ -186,7 +209,6 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
             raise
 
     if direct_download:
-        print(f"  Direct file link — downloading for preview...")
         async with page.expect_download(timeout=30000) as dl_info:
             try:
                 await page.goto(url)
@@ -197,36 +219,7 @@ async def _try_download_candidate(page: Page, title: str, url: str, download_dir
         raw_dest = download_dir / download.suggested_filename
         await download.save_as(raw_dest)
         dest = ensure_extension(raw_dest)
-        print(f"  ✓ Downloaded: {dest.name} — opening preview...")
-
-        preview_page = await page.context.new_page()
-        if dest.suffix.lower() == ".pdf":
-            await preview_page.goto(dest.as_uri())
-        else:
-            try:
-                import mammoth
-                with open(dest, "rb") as fh:
-                    html_result = mammoth.convert_to_html(fh)
-                tmp_html = download_dir / f"{dest.stem}_preview.html"
-                tmp_html.write_text(f"<html><body style='font-family:sans-serif;max-width:900px;margin:auto;padding:24px'>{html_result.value}</body></html>", encoding="utf-8")
-                await preview_page.goto(tmp_html.as_uri())
-            except Exception:
-                await preview_page.close()
-                preview_page = None
-                if sys.platform == "win32":
-                    os.startfile(str(dest))
-                else:
-                    subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(dest)])
-
-        confirm = prompt_fn(f'Previewing: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
-        if preview_page is not None:
-            await preview_page.close()
-
-        if confirm != "y":
-            dest.unlink(missing_ok=True)
-            print(f"  Skipping '{title}'...")
-            return None
-        print(f"  ✓ Confirmed.")
+        print(f"  ✓ Downloaded: {dest.name}")
         return dest
 
     dl_coords = await page.evaluate("""
@@ -282,7 +275,6 @@ async def _manual_download_fallback(page: Page, download_dir: Path, prompt_fn) -
         await dl.save_as(raw_dest)
         dest = ensure_extension(raw_dest)
         print(f"  ✓ Downloaded: {dest.name}")
-        os.startfile(str(dest))
         return dest
     except Exception:
         raise RuntimeError("No download detected. Click Download in the browser before clicking Yes.")
@@ -351,7 +343,7 @@ async def _cb_login(page, email: str, password: str):
     print("  Logging into CourseBridge...")
     await page.locator("input[type='email'], input[name='email']").first.fill(email)
     await page.locator("input[type='password']").first.fill(password)
-    await page.locator("button[type='submit']").first.click()
+    await page.locator("button:has-text('Sign in'), button[type='submit']").first.click()
     await page.wait_for_load_state("domcontentloaded")
     await page.wait_for_timeout(2000)
 
@@ -415,24 +407,53 @@ async def _cb_get_html(page) -> str:
     return html
 
 
-async def convert_with_coursebridge(file_path: Path, email: str, password: str) -> str:
-    """Upload docx to CourseBridge, return HTML string."""
+async def convert_with_coursebridge(file_path: Path, email: str, password: str, context=None, pause_fn=None) -> str:
+    """Upload docx to CourseBridge, return HTML string.
+
+    If context is provided, opens CourseBridge as a new tab in the existing browser.
+    pause_fn: optional callable called after conversion so user can review the tab.
+    """
     print("\nStep 3 — CourseBridge conversion...")
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=60, args=["--start-maximized"])
-        context = await browser.new_context(
-            storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None,
-            no_viewport=True,
-        )
-        await context.grant_permissions(["clipboard-read", "clipboard-write"])
+
+    if context is not None:
         page = await context.new_page()
+        await context.grant_permissions(["clipboard-read", "clipboard-write"])
         await page.goto(COURSEBRIDGE_URL)
         await page.wait_for_load_state("domcontentloaded")
         await _cb_login(page, email, password)
         await page.wait_for_timeout(2000)
+        if page.url != COURSEBRIDGE_URL:
+            await page.goto(COURSEBRIDGE_URL)
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(1000)
+        await _cb_upload_and_convert(page, file_path)
+        if pause_fn:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, pause_fn, "CourseBridge conversion complete.\n\nReview the CourseBridge tab in the browser, then click OK to continue.")
+        html = await _cb_get_html(page)
+        print(f"  ✓ HTML captured ({len(html)} chars)")
+        return html
+
+    # Standalone: create own browser, close when done
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=60, args=["--start-maximized"])
+        own_ctx = await browser.new_context(
+            storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None,
+            no_viewport=True,
+        )
+        await own_ctx.grant_permissions(["clipboard-read", "clipboard-write"])
+        page = await own_ctx.new_page()
+        await page.goto(COURSEBRIDGE_URL)
+        await page.wait_for_load_state("domcontentloaded")
+        await _cb_login(page, email, password)
+        await page.wait_for_timeout(2000)
+        if page.url != COURSEBRIDGE_URL:
+            await page.goto(COURSEBRIDGE_URL)
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(1000)
         await _cb_upload_and_convert(page, file_path)
         html = await _cb_get_html(page)
-        await context.storage_state(path=CB_SESSION_FILE)
+        await own_ctx.storage_state(path=CB_SESSION_FILE)
         await browser.close()
     print(f"  ✓ HTML captured ({len(html)} chars)")
     return html
@@ -440,25 +461,17 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str) 
 
 # ── Step 4 helpers ─────────────────────────────────────────────────────────────
 
-async def _click_save(page) -> bool:
-    """Find and click the first visible Save button via shadow DOM walk."""
+async def _click_save_and_close(page) -> bool:
+    """Find and click the 'Save and Close' d2l-button."""
     coords = await page.evaluate("""
         () => {
-            function walk(root) {
-                for (const el of root.querySelectorAll('button, d2l-button')) {
-                    const text = (el.textContent || '').trim();
-                    const lbl  = el.getAttribute('aria-label') || '';
-                    if (text === 'Save' || lbl === 'Save') {
-                        const r = el.getBoundingClientRect();
-                        if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
-                    }
+            for (const el of document.querySelectorAll('d2l-button')) {
+                if ((el.textContent || '').trim() === 'Save and Close') {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
                 }
-                for (const el of root.querySelectorAll('*')) {
-                    if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
-                }
-                return null;
             }
-            return walk(document);
+            return null;
         }
     """)
     if coords:
@@ -556,21 +569,6 @@ async def _set_tinymce_content(edit_page, html: str) -> str:
     """, html)
 
 
-async def _save_two_pass(edit_page):
-    """Click Save (closes dialog), wait, then click Save again (saves the topic page)."""
-    saved = await _click_save(edit_page)
-    if not saved:
-        print("  [4j] Falling back to locator...")
-        await edit_page.locator("button:has-text('Save')").last.click()
-    await edit_page.wait_for_timeout(2000)
-    print("  [4k] Looking for page Save button...")
-    saved2 = await _click_save(edit_page)
-    if saved2:
-        await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
-        print("  ✓ Course Syllabus saved successfully!")
-    else:
-        print("  [4k] No second Save found — dialog Save may have saved directly")
-
 
 async def paste_html_to_syllabus(page: Page, html: str, course_id: str):
     """Find Course Syllabus topic, open editor, replace HTML via TinyMCE, save."""
@@ -585,7 +583,13 @@ async def paste_html_to_syllabus(page: Page, html: str, course_id: str):
         raise RuntimeError(f"Could not set TinyMCE content: {result}")
     await edit_page.wait_for_timeout(500)
     print("  [4g] ✓ Content set")
-    await _save_two_pass(edit_page)
+    print("  Clicking Save and Close...")
+    saved = await _click_save_and_close(edit_page)
+    if saved:
+        await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
+        print("  ✓ Course Syllabus saved successfully!")
+    else:
+        print("  ⚠ Save and Close not found — save manually in the browser")
 
 
 # ── CRN → course ID lookup ────────────────────────────────────────────────────
@@ -664,7 +668,7 @@ def _convert_rtf_to_docx(rtf_path: Path) -> Path:
     return docx_path
 
 
-async def _convert_outline(page, course_id: str, prompt_fn, email: str, password: str) -> str | None:
+async def _convert_outline(page, course_id: str, prompt_fn, email: str, password: str, context=None, pause_fn=None) -> str | None:
     """Steps 1-3: download outline, convert if needed, run CourseBridge. Returns HTML or None if skipped."""
     file_path = await find_and_download_outline(page, course_id=course_id, prompt_fn=prompt_fn)
     if file_path is None:
@@ -678,12 +682,44 @@ async def _convert_outline(page, course_id: str, prompt_fn, email: str, password
         file_path = _convert_rtf_to_docx(file_path)
     else:
         print(f"\nStep 2 — {file_path.suffix} file, no conversion needed")
-    return await convert_with_coursebridge(file_path, email=email, password=password)
+    return await convert_with_coursebridge(file_path, email=email, password=password, context=context, pause_fn=pause_fn)
 
 
 # ── Main orchestrator ──────────────────────────────────────────────────────────
 
-async def run(dry_run: bool = False, course_url: str = "", email: str = "", password: str = "", prompt_fn=input, rename_fn=None):
+async def _run_outline_steps(page, context, course_url, email, password, dry_run, prompt_fn, rename_fn, pause_fn):
+    """Inner logic for run() — shared between standalone and staged invocations."""
+    course_id = await _resolve_course_id(page, course_url)
+    content_url = f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
+    print("Navigating to Content tab...")
+    await page.goto(content_url)
+    await page.wait_for_load_state("domcontentloaded")
+    await page.wait_for_timeout(5000)
+
+    if dry_run:
+        print("⚠  DRY RUN MODE — HTML will not be pasted into Brightspace")
+
+    html = await _convert_outline(page, course_id, prompt_fn, email, password, context=context, pause_fn=pause_fn)
+    if html is None:
+        print("\n✓ Course outline step skipped — no outline present.")
+        return
+
+    if dry_run:
+        print(f"\n✓ Dry run complete — HTML captured ({len(html):,} chars)")
+        return
+
+    await page.bring_to_front()
+    await page.goto(content_url)
+    await page.wait_for_load_state("domcontentloaded")
+    await page.wait_for_timeout(2000)
+    await paste_html_to_syllabus(page, html, course_id=course_id)
+    print("\n✓ All done!")
+    if rename_fn:
+        from staging_automator import maybe_rename_staged
+        await maybe_rename_staged(page, rename_fn)
+
+
+async def run(dry_run: bool = False, course_url: str = "", email: str = "", password: str = "", prompt_fn=input, rename_fn=None, context=None, page=None):
     _course_url = course_url or COURSE_URL
     _email      = email or COURSEBRIDGE_EMAIL
     _password   = password or COURSEBRIDGE_PASSWORD
@@ -691,76 +727,27 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
         print("✗ Course CRN or URL is not set.")
         sys.exit(1)
 
+    if context is not None:
+        # Called from staging — reuse the shared browser context, leave browser open
+        await _run_outline_steps(page, context, _course_url, _email, _password, dry_run, prompt_fn, rename_fn, pause_fn=prompt_fn)
+        return
+
+    # Standalone — create own browser, close when done
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
-        context = await browser.new_context(
+        own_ctx = await browser.new_context(
             storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None,
             no_viewport=True,
         )
-        page = await context.new_page()
-        await _wait_for_bs_login(page, context)
-        course_id = await _resolve_course_id(page, _course_url)
+        own_page = await own_ctx.new_page()
+        await _wait_for_bs_login(own_page, own_ctx)
+        await _run_outline_steps(own_page, own_ctx, _course_url, _email, _password, dry_run, prompt_fn, rename_fn, pause_fn=prompt_fn)
+        # Stay alive until user closes the browser manually
+        try:
+            await own_page.wait_for_event("close", timeout=0)
+        except Exception:
+            pass
 
-        content_url = f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
-        print("Navigating to Content tab...")
-        await page.goto(content_url)
-        await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(5000)
-
-        if dry_run:
-            print("⚠  DRY RUN MODE — HTML will not be pasted into Brightspace")
-
-        html = await _convert_outline(page, course_id, prompt_fn, _email, _password)
-        if html is None:
-            print("\n✓ Course outline step skipped — no outline present.")
-            await browser.close()
-            return
-
-        preview_path = _HERE / "coursebridge_preview.html"
-        preview_path.write_text(html, encoding="utf-8")
-        print(f"\n  HTML saved to {preview_path.name} ({len(html):,} chars)")
-
-        if dry_run:
-            print("\n✓ Dry run complete — HTML saved to coursebridge_preview.html")
-            await browser.close()
-            return
-
-        await page.goto(content_url)
-        await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(2000)
-        await paste_html_to_syllabus(page, html, course_id=course_id)
-        print("\n✓ All done!")
-        if rename_fn:
-            from staging_automator import maybe_rename_staged
-            await maybe_rename_staged(page, rename_fn)
-        await browser.close()
-
-
-# ── Step 4 standalone test ────────────────────────────────────────────────────
-
-async def test_step4(course_url: str = ""):
-    """Test only Step 4: read existing coursebridge_preview.html and paste into Brightspace."""
-    preview_path = _HERE / "coursebridge_preview.html"
-    if not preview_path.exists():
-        raise RuntimeError("coursebridge_preview.html not found. Run Steps 1-3 first.")
-    html = preview_path.read_text(encoding="utf-8")
-    print(f"Loaded {preview_path.name} ({len(html):,} chars)")
-    _course_url = course_url or COURSE_URL
-    if not _course_url:
-        raise RuntimeError("Course CRN or URL is required.")
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
-        context = await browser.new_context(
-            storage_state=BS_SESSION_FILE if os.path.exists(BS_SESSION_FILE) else None,
-            no_viewport=True,
-        )
-        page = await context.new_page()
-        await _wait_for_bs_login(page, context)
-        course_id = await _resolve_course_id(page, _course_url)
-        await paste_html_to_syllabus(page, html, course_id=course_id)
-        print("\n✓ Step 4 test complete!")
-        await browser.close()
 
 
 if __name__ == "__main__":
