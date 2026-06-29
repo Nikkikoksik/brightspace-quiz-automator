@@ -121,7 +121,7 @@ async def run_bs_login():
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
             headless=False,
-            slow_mo=80,
+
             args=["--start-maximized"],
             no_viewport=True,
         )
@@ -135,7 +135,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
             headless=False,
-            slow_mo=80,
+
             args=["--start-maximized"],
             no_viewport=True,
         )
@@ -236,7 +236,7 @@ async def run_verify(urls: list[str]):
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
             headless=False,
-            slow_mo=80,
+
             args=["--start-maximized"],
             no_viewport=True,
         )
@@ -302,7 +302,7 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, limit: int 
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
             headless=False,
-            slow_mo=80,
+
             args=["--start-maximized"],
             no_viewport=True,
         )
@@ -379,7 +379,7 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
             headless=False,
-            slow_mo=80,
+
             args=["--start-maximized"],
             no_viewport=True,
         )
