@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import os
 import queue
@@ -19,7 +19,7 @@ except ImportError:
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-VERSION = "v0.8.0"
+VERSION = "v0.8.5"
 
 _HERE        = Path(__file__).parent
 if os.name == "nt":

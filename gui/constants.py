@@ -1,7 +1,7 @@
-import os
+﻿import os
 from pathlib import Path
 
-VERSION      = "v0.8.0"
+VERSION      = "v0.8.5"
 _ROOT        = Path(__file__).parent.parent
 ICON_PATH    = str(_ROOT / "installer" / "assets" / "icon.ico")
 USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
