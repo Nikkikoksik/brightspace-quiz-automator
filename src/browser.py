@@ -82,14 +82,27 @@ async def _quiz_worker(context, queue, results, failed_timer, lock, settings, dr
             t_start = time.time()
             quiz_failed = False
             try:
-                await page.goto(edit_url, wait_until="domcontentloaded", timeout=30000)
-                try:
+                if edit_url:
+                    # Fast path: direct navigation to edit page
+                    await page.goto(edit_url, wait_until="domcontentloaded", timeout=30000)
+                    try:
+                        await page.wait_for_selector(
+                            "button.d2l-grade-info, button.d2l-collapsible-panel-opener",
+                            timeout=15000,
+                        )
+                    except Exception:
+                        pass
+                else:
+                    # Fallback: navigate to quiz list and use action menu
+                    try:
+                        await page.goto(quiz_url, wait_until="commit")
+                    except Exception:
+                        pass
                     await page.wait_for_selector(
-                        "button.d2l-grade-info, button.d2l-collapsible-panel-opener",
-                        timeout=15000,
+                        "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
                     )
-                except Exception:
-                    pass
+                    await open_quiz_edit(page, name)
+
                 if settings.get("rename_moodle_titles"):
                     await apply_rename_title(page, name, dry_run)
                 if settings.get("set_in_gradebook"):
@@ -235,44 +248,19 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             if pairs:
                 print(f"  Harvest: {len(pairs)} edit URLs — using {WORKER_COUNT} parallel workers")
                 pairs = pairs[start_from - 1:end_at]
-                queue: asyncio.Queue = asyncio.Queue()
-                for idx, (qname, edit_url) in enumerate(pairs, start_from):
-                    await queue.put((idx, qname, edit_url))
-                lock = asyncio.Lock()
-                await asyncio.gather(*[
-                    _quiz_worker(context, queue, results, failed_timer, lock,
-                                 settings, dry_run, quiz_url, w)
-                    for w in range(1, WORKER_COUNT + 1)
-                ])
             else:
-                print("  Harvest returned no URLs — falling back to sequential")
-                for i, name in enumerate(names, start_from):
-                    print(f"\n[{i}/{total}]  [{name}]")
-                    t_start = time.time()
-                    quiz_failed = False
-                    try:
-                        await page.goto(quiz_url, wait_until="commit")
-                    except Exception:
-                        pass
-                    await page.wait_for_selector(
-                        "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
-                    )
-                    await open_quiz_edit(page, name)
-                    if settings.get("rename_moodle_titles"):
-                        await apply_rename_title(page, name, dry_run)
-                    if settings.get("set_in_gradebook"):
-                        await apply_gradebook(page, dry_run)
-                    if settings.get("set_auto_submit"):
-                        ok = await apply_auto_submit(page, dry_run)
-                        if ok is False:
-                            quiz_failed = True
-                            failed_timer.append(f"[{i}/{total}] {name}")
-                    await save_quiz(page, dry_run)
-                    elapsed = time.time() - t_start
-                    results.append({"name": name, "elapsed": elapsed, "failed": quiz_failed})
-                    if not quiz_failed and not dry_run:
-                        _save_timing(quiz_url, name, elapsed)
-                        print(f"    Timing    : {elapsed:.1f}s")
+                print(f"  Harvest: no direct URLs found — {WORKER_COUNT} parallel workers will use action menu")
+                pairs = [(n, None) for n in names]
+
+            queue: asyncio.Queue = asyncio.Queue()
+            for idx, (qname, edit_url) in enumerate(pairs, start_from):
+                await queue.put((idx, qname, edit_url))
+            lock = asyncio.Lock()
+            await asyncio.gather(*[
+                _quiz_worker(context, queue, results, failed_timer, lock,
+                             settings, dry_run, quiz_url, w)
+                for w in range(1, WORKER_COUNT + 1)
+            ])
 
             if failed_timer:
                 print(f"\n{'─' * 50}")
