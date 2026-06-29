@@ -1,0 +1,122 @@
+from PyQt6.QtGui import QPalette, QColor
+
+from gui.constants import CHECK_SVG_PATH
+
+T = {
+    "bg":           "#0d1117",
+    "sidebar_bg":   "#010409",
+    "card_bg":      "#161b22",
+    "card_border":  "#21262d",
+    "accent":       "#0ea5e9",
+    "accent_dim":   "#0c4a6e",
+    "accent_hover": "#38bdf8",
+    "nav_hover":    "#161b22",
+    "nav_active":   "#0c4a6e",
+    "text":         "#e6edf3",
+    "text_muted":   "#8b949e",
+    "text_dim":     "#484f58",
+    "btn_primary":  "#0ea5e9",
+    "btn_primary_h":"#38bdf8",
+    "btn_muted":    "#21262d",
+    "btn_muted_h":  "#30363d",
+    "btn_danger":   "#6e1a1a",
+    "btn_danger_h": "#922222",
+    "btn_add":      "#14532d",
+    "btn_add_h":    "#166534",
+    "warn":         "#f59e0b",
+    "success":      "#22c55e",
+    "terminal_bg":  "#010409",
+}
+
+
+def _dark_palette() -> QPalette:
+    p = QPalette()
+    p.setColor(QPalette.ColorRole.Window,          QColor(T["bg"]))
+    p.setColor(QPalette.ColorRole.WindowText,      QColor(T["text"]))
+    p.setColor(QPalette.ColorRole.Base,            QColor(T["card_bg"]))
+    p.setColor(QPalette.ColorRole.AlternateBase,   QColor(T["sidebar_bg"]))
+    p.setColor(QPalette.ColorRole.Text,            QColor(T["text"]))
+    p.setColor(QPalette.ColorRole.Button,          QColor(T["btn_muted"]))
+    p.setColor(QPalette.ColorRole.ButtonText,      QColor(T["text"]))
+    p.setColor(QPalette.ColorRole.Highlight,       QColor(T["accent"]))
+    p.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    p.setColor(QPalette.ColorRole.PlaceholderText, QColor(T["text_dim"]))
+    p.setColor(QPalette.ColorRole.Mid,             QColor(T["card_border"]))
+    return p
+
+
+def _btn(bg: str, hover: str, text: str = "#ffffff", radius: int = 8) -> str:
+    return f"""
+        QPushButton {{
+            background: {bg}; color: {text}; border: none;
+            border-radius: {radius}px; font-size: 13px;
+            padding: 0 16px; font-weight: 600;
+        }}
+        QPushButton:hover {{ background: {hover}; }}
+        QPushButton:disabled {{ background: {T["btn_muted"]}; color: {T["text_dim"]}; }}
+    """
+
+
+def _card() -> str:
+    return f"QFrame {{ background: {T['card_bg']}; border: 1px solid {T['card_border']}; border-radius: 10px; }}"
+
+
+def _entry_style() -> str:
+    return f"""
+        QLineEdit {{
+            background: {T["bg"]}; color: {T["text"]};
+            border: 1px solid {T["card_border"]}; border-radius: 6px;
+            padding: 0 12px; font-size: 13px;
+        }}
+        QLineEdit:focus {{ border: 1px solid {T["accent"]}; }}
+    """
+
+
+def _checkbox_style(warn: bool = False) -> str:
+    color = T["warn"] if warn else T["text"]
+    return f"""
+        QCheckBox {{ color: {color}; font-size: 13px; spacing: 8px; padding: 5px 0px; }}
+        QCheckBox::indicator {{
+            width: 16px; height: 16px;
+            border: 1px solid {T["card_border"]}; border-radius: 4px; background: {T["bg"]};
+        }}
+        QCheckBox::indicator:checked {{
+            background: {T["accent"]}; border: 1px solid {T["accent"]};
+            image: url({CHECK_SVG_PATH});
+        }}
+    """
+
+
+def _log_style() -> str:
+    return f"""
+        QTextEdit {{
+            background: {T["terminal_bg"]}; color: {T["text_muted"]};
+            border: none; border-left: 2px solid {T["accent_dim"]}; border-radius: 0px;
+            font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+            font-size: 12px; padding: 10px 14px;
+        }}
+    """
+
+
+def _tab_style() -> str:
+    return f"""
+        QTabWidget::pane {{ border: 1px solid {T["card_border"]}; border-radius: 8px; background: {T["card_bg"]}; }}
+        QTabBar::tab {{
+            background: {T["btn_muted"]}; color: {T["text_muted"]};
+            padding: 8px 20px; border-radius: 6px; margin-right: 4px; font-size: 12px;
+        }}
+        QTabBar::tab:selected {{ background: {T["nav_active"]}; color: {T["accent"]}; font-weight: 600; }}
+        QTabBar::tab:hover {{ background: {T["btn_muted_h"]}; color: {T["text"]}; }}
+    """
+
+
+def _scroll_style() -> str:
+    return f"""
+        QScrollArea {{ background: transparent; border: none; }}
+        QWidget {{ background: transparent; }}
+        QScrollBar:vertical {{
+            background: {T["bg"]}; width: 6px; border-radius: 3px;
+        }}
+        QScrollBar::handle:vertical {{ background: {T["card_border"]}; border-radius: 3px; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+    """

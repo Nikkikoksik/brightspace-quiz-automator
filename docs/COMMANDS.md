@@ -70,7 +70,8 @@ git push origin nick --force-with-lease # push your rebased nick to GitHub (--fo
 git status                              # It shows you every file that changed. You'll see something like: 
 #modified:   gui.py or modified:   src/actions.py
 
-git add gui.py  # only add what is in the list
+git add -A     # stages ALL changed and NEW files (new folders like gui/ need this)
+               # if you only want specific files: git add gui.py src/actions.py
 
 git commit -m "describe what you changed" # save a snapshot with a message
 
@@ -92,14 +93,18 @@ git switch nick                         # move back to your working branch
 
 ```powershell
 git switch main                         # move to the main branch
-
-git pull # git switch main opens your local copy, git pull refreshes it from GitHub before you write to it.
-
+git pull                                # refresh from GitHub before writing to it
 git merge dev --no-edit                 # merge the latest dev into main
 git push origin main                    # upload main to GitHub (safe — no force)
+
+git switch dev                          # sync dev back up to main's merge commit
+git merge main --no-edit               # (keeps dev and main at the same commit)
+git push origin dev
+
 git switch nick                         # move back to your working branch
 ```
 > Run this when dev is stable and you want to publish a release. Always do the "Committing and Pushing to Dev" block first.
+> The `git switch dev; git merge main` step prevents dev from showing "X commits behind main" in GitHub.
 
 ## Git — See Recent Commits
 
