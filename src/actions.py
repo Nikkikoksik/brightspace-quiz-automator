@@ -85,8 +85,8 @@ async def _set_points_if_zero(page: Page):
         print("    Gradebook : set points to 10 (was 0)")
 
 
-async def apply_gradebook(page: Page, dry_run: bool):
-    """Switch quiz from Not in Grade Book → In Grade Book."""
+async def apply_gradebook(page: Page, dry_run: bool) -> bool | None:
+    """Switch quiz from Not in Grade Book → In Grade Book. Returns True if changed, False if already set, None if not found."""
     try:
         try:
             await page.wait_for_function("""
@@ -110,14 +110,14 @@ async def apply_gradebook(page: Page, dry_run: bool):
 
         if not await grade_btn.count():
             print("    Gradebook : not found — skipping")
-            return
+            return None
 
         div_text = await grade_btn.locator("div").first.inner_text()
 
         if "Not in Grade Book" in div_text:
             if dry_run:
                 print("    Gradebook : [DRY RUN] Would switch to In Grade Book")
-                return
+                return False
             print("    Gradebook : Not in Grade Book → switching...")
             await grade_btn.click()
             await page.wait_for_selector(
@@ -128,16 +128,29 @@ async def apply_gradebook(page: Page, dry_run: bool):
                 "d2l-menu-item[text='Add to Grade Book'], li:has-text('Add to Grade Book')"
             ).first
             await option.click()
-            await page.wait_for_timeout(800)
+            try:
+                await page.wait_for_function("""
+                    () => {
+                        const btn = document.querySelector('button.d2l-grade-info');
+                        if (!btn) return false;
+                        const div = btn.querySelector('div');
+                        return div && !div.textContent.includes('Not in Grade Book');
+                    }
+                """, timeout=5000)
+            except Exception:
+                pass
             await _set_points_if_zero(page)
             print("    Gradebook : ✓ Added to Grade Book")
+            return True
         else:
             print("    Gradebook : already In Grade Book — skipping")
+            return False
 
     except Exception as e:
         print(f"    Gradebook : ✗ {e}")
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(300)
+        return None
 
 
 async def _read_timing_summary(page: Page) -> str | None:
@@ -178,7 +191,6 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             if await timing_btn.get_attribute("aria-expanded") == "false":
                 print("    Timer     : expanding Timing section...")
                 await timing_btn.click()
-                await page.wait_for_timeout(600)
 
         # Wait for Timer Settings link — if absent, quiz has no timer
         try:
@@ -246,7 +258,6 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             return
         print(f"    Timer     : clicking radio '{radio_coords.get('label', 'autosubmit')}'...")
         await _flash_click(page, radio_coords["x"], radio_coords["y"])
-        await page.wait_for_timeout(600)
         radio_state = await radio.is_checked()
         print(f"    Timer     : radio checked = {radio_state}")
 
@@ -256,7 +267,6 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             try:
                 await radio.scroll_into_view_if_needed()
                 await radio.click()
-                await page.wait_for_timeout(400)
                 radio_state = await radio.is_checked()
                 print(f"    Timer     : radio checked (locator) = {radio_state}")
             except Exception as e:
@@ -297,15 +307,6 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             print("    Timer     : dialog closed ✓")
         except Exception:
             print("    Timer     : ⚠ dialog did not close after 10s — OK click may have missed")
-
-        print("    Timer     : waiting for API to settle...")
-        await page.wait_for_timeout(1000)
-        try:
-            await page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            pass
-        await page.wait_for_timeout(800)
-        print("    Timer     : network idle ✓")
         summary_after = await _read_timing_summary(page)
         print(f"    Timer     : summary after OK = '{summary_after}'")
 
@@ -339,14 +340,12 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             """)
             if retry_radio_coords:
                 await _flash_click(page, retry_radio_coords["x"], retry_radio_coords["y"])
-            await page.wait_for_timeout(600)
             retry_radio_state = await radio.is_checked()
             if not retry_radio_state:
                 print("    Timer     : retry coord click missed — trying locator click...")
                 try:
                     await radio.scroll_into_view_if_needed()
                     await radio.click()
-                    await page.wait_for_timeout(400)
                     retry_radio_state = await radio.is_checked()
                     print(f"    Timer     : retry radio checked (locator) = {retry_radio_state}")
                 except Exception as e:
@@ -362,11 +361,6 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                 await _flash_click(page, retry_ok_coords["x"], retry_ok_coords["y"])
             else:
                 await page.keyboard.press("Enter")
-            await page.wait_for_timeout(1500)
-            try:
-                await page.wait_for_load_state("networkidle", timeout=8000)
-            except Exception:
-                pass
             summary_retry = await _read_timing_summary(page)
             if summary_retry == "Auto-submit when time is up":
                 print("    Timer     : ✓ retry succeeded")
@@ -434,12 +428,10 @@ async def save_quiz(page: Page, dry_run: bool):
         if save_coords:
             print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
             await _flash_click(page, save_coords["x"], save_coords["y"])
-            await page.wait_for_timeout(1500)
             try:
                 await page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
-            await page.wait_for_timeout(800)
             print("    Save      : Save clicked ✓")
         else:
             print("    Save      : ⚠ Save button not found — skipping intermediate save")
@@ -456,8 +448,8 @@ async def save_quiz(page: Page, dry_run: bool):
         print(f"    Save      : ✗ {e}")
 
 
-async def apply_assignment_gradebook(page: Page, dry_run: bool):
-    """Switch assignment from Not in Grade Book → In Grade Book (shadow DOM aware)."""
+async def apply_assignment_gradebook(page: Page, dry_run: bool) -> bool | None:
+    """Switch assignment from Not in Grade Book → In Grade Book (shadow DOM aware). Returns True if changed, False if already set, None if not found."""
     try:
         try:
             await page.wait_for_function("""
@@ -478,7 +470,7 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
                 }
             """, timeout=20000)
         except Exception:
-            await page.wait_for_timeout(1500)
+            pass
 
         info = await page.evaluate("""
             () => {
@@ -510,20 +502,23 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
 
         if not info:
             print("    Gradebook : grade info button not found in DOM/shadow DOM — skipping")
-            return
+            return None
 
         print(f"    Gradebook : found button text = {repr(info.get('text','').strip()[:80])}")
         if "Not in Grade Book" not in info.get("text", ""):
             print("    Gradebook : already In Grade Book — skipping")
-            return
+            return False
 
         if dry_run:
             print("    Gradebook : [DRY RUN] Would switch to In Grade Book")
-            return
+            return False
 
         print("    Gradebook : Not in Grade Book → switching...")
         await _flash_click(page, info["x"], info["y"])
-        await page.wait_for_timeout(600)
+        await page.wait_for_selector(
+            "d2l-menu-item[text='Add to Grade Book'], li:has-text('Add to Grade Book')",
+            timeout=5000,
+        )
 
         option = await page.evaluate("""
             () => {
@@ -548,9 +543,27 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
             raise Exception("'Add to Grade Book' menu item not found after clicking grade button")
 
         await _flash_click(page, option["x"], option["y"])
-        await page.wait_for_timeout(800)
+        try:
+            await page.wait_for_function("""
+                () => {
+                    function find(root) {
+                        for (const el of root.querySelectorAll('button.d2l-grade-info, [class*="grade-info"]')) {
+                            if (el.getBoundingClientRect().width > 0)
+                                return !(el.innerText || el.textContent || '').includes('Not in Grade Book');
+                        }
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.shadowRoot) { const r = find(el.shadowRoot); if (r !== undefined) return r; }
+                        }
+                        return false;
+                    }
+                    return find(document);
+                }
+            """, timeout=5000)
+        except Exception:
+            pass
         await _set_points_if_zero(page)
         print("    Gradebook : ✓ Added to Grade Book")
+        return True
 
     except Exception as e:
         print(f"    Gradebook : ✗ {e}")
@@ -559,6 +572,7 @@ async def apply_assignment_gradebook(page: Page, dry_run: bool):
         except Exception:
             pass
         await page.wait_for_timeout(300)
+        return None
 
 
 async def verify_quiz_settings(page: Page) -> dict:
@@ -616,7 +630,10 @@ async def apply_pdf_only_file_type(page: Page, dry_run: bool):
         if await sub_btn.count() and await sub_btn.get_attribute("aria-expanded") == "false":
             print("    FileType  : expanding Submission & Completion...")
             await sub_btn.click()
-            await page.wait_for_timeout(600)
+            try:
+                await page.wait_for_selector("#assignment-allowable-filetypes", timeout=5000)
+            except Exception:
+                pass
 
         result = await page.evaluate("""
             () => {
@@ -684,12 +701,10 @@ async def save_assignment(page: Page, dry_run: bool):
         if save_coords:
             print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
             await _flash_click(page, save_coords["x"], save_coords["y"])
-            await page.wait_for_timeout(1500)
             try:
                 await page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
-            await page.wait_for_timeout(800)
             print("    Save      : Save clicked ✓")
         else:
             print("    Save      : ⚠ Save button not found — skipping intermediate save")
