@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200
+from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200, harvest_quiz_edit_urls
 from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary, apply_pdf_only_file_type, apply_rename_title
 
 if os.name == "nt":
@@ -19,6 +19,7 @@ SESSION_FILE = str(_USERDATA_DIR / "session.json")
 STATS_FILE   = str(_USERDATA_DIR / "timing_stats.json")
 _BS_PROFILE  = str(Path(__file__).parent.parent / "bs_profile")
 _OUTLINE_CFG = _USERDATA_DIR / "outline_config.json"
+WORKER_COUNT = 3
 
 
 def _load_bs_credentials():
@@ -67,6 +68,52 @@ def _save_timing(course_url: str, quiz_name: str, elapsed_s: float):
             json.dump(data, f, indent=2)
     except Exception:
         pass
+
+
+async def _quiz_worker(context, queue, results, failed_timer, lock, settings, dry_run, quiz_url, worker_id):
+    page = await context.new_page()
+    try:
+        while True:
+            try:
+                idx, name, edit_url = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            print(f"\n[{idx}]  [{name}]  (W{worker_id})")
+            t_start = time.time()
+            quiz_failed = False
+            try:
+                await page.goto(edit_url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    await page.wait_for_selector(
+                        "button.d2l-grade-info, button.d2l-collapsible-panel-opener",
+                        timeout=15000,
+                    )
+                except Exception:
+                    pass
+                if settings.get("rename_moodle_titles"):
+                    await apply_rename_title(page, name, dry_run)
+                if settings.get("set_in_gradebook"):
+                    await apply_gradebook(page, dry_run)
+                if settings.get("set_auto_submit"):
+                    ok = await apply_auto_submit(page, dry_run)
+                    if ok is False:
+                        quiz_failed = True
+                        async with lock:
+                            failed_timer.append(f"[{idx}] {name}")
+                await save_quiz(page, dry_run)
+            except Exception as e:
+                quiz_failed = True
+                print(f"    ✗ worker {worker_id} failed on '{name}': {e}")
+                async with lock:
+                    failed_timer.append(f"[{idx}] {name}")
+            elapsed = time.time() - t_start
+            async with lock:
+                results.append({"name": name, "elapsed": elapsed, "failed": quiz_failed})
+            if not quiz_failed and not dry_run:
+                _save_timing(quiz_url, name, elapsed)
+            print(f"    Timing    : {elapsed:.1f}s  (W{worker_id})")
+    finally:
+        await page.close()
 
 
 async def _wait_for_login(page, context):
@@ -183,33 +230,49 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
 
             failed_timer = []
             results      = []
-            for i, name in enumerate(names, start_from):
-                print(f"\n[{i}/{total}]  [{name}]")
-                t_start = time.time()
-                quiz_failed = False
-                try:
-                    await page.goto(quiz_url, wait_until="commit")
-                except Exception:
-                    pass
-                await page.wait_for_selector(
-                    "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
-                )
-                await open_quiz_edit(page, name)
-                if settings.get("rename_moodle_titles"):
-                    await apply_rename_title(page, name, dry_run)
-                if settings.get("set_in_gradebook"):
-                    await apply_gradebook(page, dry_run)
-                if settings.get("set_auto_submit"):
-                    ok = await apply_auto_submit(page, dry_run)
-                    if ok is False:
-                        quiz_failed = True
-                        failed_timer.append(f"[{i}/{total}] {name}")
-                await save_quiz(page, dry_run)
-                elapsed = time.time() - t_start
-                results.append({"name": name, "elapsed": elapsed, "failed": quiz_failed})
-                if not quiz_failed and not dry_run:
-                    _save_timing(quiz_url, name, elapsed)
-                    print(f"    Timing    : {elapsed:.1f}s")
+
+            pairs = await harvest_quiz_edit_urls(page, quiz_url)
+            if pairs:
+                print(f"  Harvest: {len(pairs)} edit URLs — using {WORKER_COUNT} parallel workers")
+                pairs = pairs[start_from - 1:end_at]
+                queue: asyncio.Queue = asyncio.Queue()
+                for idx, (qname, edit_url) in enumerate(pairs, start_from):
+                    await queue.put((idx, qname, edit_url))
+                lock = asyncio.Lock()
+                await asyncio.gather(*[
+                    _quiz_worker(context, queue, results, failed_timer, lock,
+                                 settings, dry_run, quiz_url, w)
+                    for w in range(1, WORKER_COUNT + 1)
+                ])
+            else:
+                print("  Harvest returned no URLs — falling back to sequential")
+                for i, name in enumerate(names, start_from):
+                    print(f"\n[{i}/{total}]  [{name}]")
+                    t_start = time.time()
+                    quiz_failed = False
+                    try:
+                        await page.goto(quiz_url, wait_until="commit")
+                    except Exception:
+                        pass
+                    await page.wait_for_selector(
+                        "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
+                    )
+                    await open_quiz_edit(page, name)
+                    if settings.get("rename_moodle_titles"):
+                        await apply_rename_title(page, name, dry_run)
+                    if settings.get("set_in_gradebook"):
+                        await apply_gradebook(page, dry_run)
+                    if settings.get("set_auto_submit"):
+                        ok = await apply_auto_submit(page, dry_run)
+                        if ok is False:
+                            quiz_failed = True
+                            failed_timer.append(f"[{i}/{total}] {name}")
+                    await save_quiz(page, dry_run)
+                    elapsed = time.time() - t_start
+                    results.append({"name": name, "elapsed": elapsed, "failed": quiz_failed})
+                    if not quiz_failed and not dry_run:
+                        _save_timing(quiz_url, name, elapsed)
+                        print(f"    Timing    : {elapsed:.1f}s")
 
             if failed_timer:
                 print(f"\n{'─' * 50}")

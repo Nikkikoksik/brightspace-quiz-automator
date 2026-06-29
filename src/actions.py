@@ -428,10 +428,6 @@ async def save_quiz(page: Page, dry_run: bool):
         if save_coords:
             print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
             await _flash_click(page, save_coords["x"], save_coords["y"])
-            try:
-                await page.wait_for_load_state("networkidle", timeout=8000)
-            except Exception:
-                pass
             print("    Save      : Save clicked ✓")
         else:
             print("    Save      : ⚠ Save button not found — skipping intermediate save")
@@ -598,7 +594,10 @@ async def verify_quiz_settings(page: Page) -> dict:
         if await timing_btn.count():
             if await timing_btn.get_attribute("aria-expanded") == "false":
                 await timing_btn.click()
-                await page.wait_for_timeout(600)
+                try:
+                    await page.wait_for_selector("text=Timer Settings", timeout=5000)
+                except Exception:
+                    pass
 
         timer_link = page.locator("text=Timer Settings").first
         if await timer_link.count():
@@ -701,10 +700,6 @@ async def save_assignment(page: Page, dry_run: bool):
         if save_coords:
             print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
             await _flash_click(page, save_coords["x"], save_coords["y"])
-            try:
-                await page.wait_for_load_state("networkidle", timeout=8000)
-            except Exception:
-                pass
             print("    Save      : Save clicked ✓")
         else:
             print("    Save      : ⚠ Save button not found — skipping intermediate save")
