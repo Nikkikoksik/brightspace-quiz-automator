@@ -480,6 +480,46 @@ async def _click_save_and_close(page) -> bool:
     return False
 
 
+async def _save_two_pass(page) -> bool:
+    """Fallback save helper shared by outline and content cleaner flows."""
+    if await _click_save_and_close(page):
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+        print("  ✓ Saved")
+        return True
+
+    coords = await page.evaluate("""
+        () => {
+            function walk(root) {
+                for (const el of root.querySelectorAll('button, d2l-button')) {
+                    const text = (el.textContent || '').trim().toLowerCase();
+                    if (text === 'save' || text === 'save and close') {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0) {
+                            return { x: r.left + r.width/2, y: r.top + r.height/2, label: text };
+                        }
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) {
+                        const c = walk(el.shadowRoot);
+                        if (c) return c;
+                    }
+                }
+                return null;
+            }
+            return walk(document);
+        }
+    """)
+    if not coords:
+        print("  ⚠ Save button not found — save manually in the browser")
+        return False
+
+    await page.mouse.click(coords["x"], coords["y"])
+    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    print("  ✓ Saved")
+    return True
+
+
 async def _get_topic_id(page: Page, course_id: str) -> tuple[str, str]:
     """Look up Course Syllabus TopicId via API. Returns (topic_id, viewer_url)."""
     toc = None

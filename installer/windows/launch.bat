@@ -23,5 +23,5 @@ pause & exit /b 1
 
 :run
 "%PY%" src\auto_update.py
-"%PY%" gui.py
+"%PY%" gui_pyqt6.py
 pause

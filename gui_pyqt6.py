@@ -21,7 +21,7 @@ from gui.constants import (
 from gui.dialogs import _ThreadBridge
 from gui.panels import (
     AssignmentPanelMixin, HistoryPanelMixin, NotesPanelMixin,
-    OutlinePanelMixin, QueuePanelMixin, QuizPanelMixin,
+    ContentCleanerPanelMixin, OutlinePanelMixin, QueuePanelMixin, QuizPanelMixin,
     SettingsPanelMixin, StagingPanelMixin, TimerFixPanelMixin,
 )
 from gui.telemetry import _init_sentry, _sentry_capture
@@ -35,6 +35,7 @@ class App(
     QuizPanelMixin,
     AssignmentPanelMixin,
     OutlinePanelMixin,
+    ContentCleanerPanelMixin,
     NotesPanelMixin,
     TimerFixPanelMixin,
     QueuePanelMixin,
@@ -92,6 +93,7 @@ class App(
             ("Course Outline",       self._build_outline_panel),
             ("Notes",                self._build_notes_panel),
             ("Timer Fix",            self._build_timerfix_panel),
+            ("Content Cleaner",      self._build_content_cleaner_panel),
             ("Queue",                self._build_queue_panel),
             ("History",              self._build_history_panel),
             ("Settings",             self._build_settings_panel),
@@ -138,7 +140,12 @@ class App(
             f"letter-spacing: 1px; padding: 6px 20px 2px 20px; background: transparent;"
         )
         layout.addWidget(opt)
-        for key, label in [("Timer Fix", "Timer Fix"), ("Queue", "Queue"), ("History", "History")]:
+        for key, label in [
+            ("Timer Fix", "Timer Fix"),
+            ("Content Cleaner", "Content Cleaner"),
+            ("Queue", "Queue"),
+            ("History", "History"),
+        ]:
             layout.addWidget(self._make_nav_btn(key, label))
 
         layout.addStretch()
@@ -292,6 +299,7 @@ class App(
                     "quiz":    getattr(self, "_quiz_log",    None),
                     "assign":  getattr(self, "_assign_log",  None),
                     "tfix":    getattr(self, "_tfix_log",    None),
+                    "cleaner": getattr(self, "_cleaner_log", None),
                     "staging": getattr(self, "_staging_log", None),
                     "outline": getattr(self, "_outline_log", None),
                 }.get(tag, getattr(self, "_outline_log", None))
@@ -328,6 +336,9 @@ class App(
                     elif tag == "tfix":
                         self._tfix_run_btn.setEnabled(True)
                         self._tfix_run_btn.setText("▶  Run Timer Fix")
+                    elif tag == "cleaner":
+                        self._cleaner_run_btn.setEnabled(True)
+                        self._cleaner_run_btn.setText("▶  Run Content Cleaner")
                     elif tag == "staging":
                         self._staging_steps12_btn.setEnabled(True)
                         self._staging_steps12_btn.setText("▶   Stage Course")

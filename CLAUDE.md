@@ -19,13 +19,13 @@ Playwright-based GUI tool that bulk-updates quiz settings in Brightspace (D2L LM
 
 ## How to run
 ```
-python gui.py          # GUI (normal use)
+python gui_pyqt6.py        # GUI (normal use) — double-click run.bat
 python quiz_automator.py   # CLI fallback
 ```
 
 ## File structure
-- `gui.py` — CustomTkinter GUI app (primary interface, production)
-- `gui_pyqt6.py` — PyQt6 GUI rebuild (WIP on `nick` branch — see section below)
+- `gui_pyqt6.py` — PyQt6 GUI (primary interface, production) — launched by `run.bat`
+- `archive/gui_customtkinter_legacy.py` — old CustomTkinter GUI (archived, do not use)
 - `quiz_automator.py` — CLI entry point, reads URLs from `courses.txt`
 - `config.py` — default settings toggles for CLI
 - `browser.py` — browser session setup, loops over courses and quizzes
@@ -33,7 +33,7 @@ python quiz_automator.py   # CLI fallback
 - `actions.py` — `apply_gradebook()`, `apply_auto_submit()`, `save_quiz()`
 - `courses.txt` — one quiz page URL per line (gitignored user data)
 - `setup.bat` — one-time install for co-workers
-- `run.bat` — launches gui.py (still points at old GUI — do not change until PyQt6 version is confirmed working)
+- `run.bat` — launches `gui_pyqt6.py` (PyQt6 is now the sole GUI)
 - `update.bat` — downloads latest ZIP from GitHub (no Git needed)
 
 ## GitHub
@@ -141,7 +141,7 @@ File does not exist as of 2026-06-02. Spec is in `COURSE_OUTLINE_AUTOMATOR_SPEC.
 
 # PyQt6 GUI Rebuild — WIP (`nick` branch)
 
-`gui_pyqt6.py` is a full rebuild of `gui.py` using PyQt6 instead of CustomTkinter. It is a surprise for co-workers — keep it on the `nick` branch until ready to ship.
+`gui_pyqt6.py` is the production GUI, replacing the old CustomTkinter `gui.py` (now archived in `archive/`). It is launched by `run.bat`.
 
 ## How to run
 ```
@@ -158,7 +158,7 @@ Start-Process python -ArgumentList "gui.py"; Start-Process python -ArgumentList 
 - App icon wired up from `installer/assets/icon.ico` (shows in Windows taskbar)
 - Checkboxes: white checkmark SVG written to `%APPDATA%/BrightspaceAutomator/check.svg` at startup
 - Cross-thread UI (dialogs from worker threads) handled by `_ThreadBridge` QObject using `pyqtSignal`
-- `run.bat` still points at `gui.py` — production is untouched
+- `run.bat` points at `gui_pyqt6.py` — PyQt6 is now the active GUI
 
 ## What still needs work
 - **Collapsible sidebar** — user requested, not built yet

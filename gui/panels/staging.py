@@ -43,6 +43,13 @@ class StagingPanelMixin:
         )
         self._staging_steps12_btn.clicked.connect(self._start_staging_steps_1_2)
         layout.addWidget(self._staging_steps12_btn)
+        layout.addSpacing(8)
+
+        self._mark_ready_btn = QPushButton("✓   Mark as Ready  (_Staged -> _Ready)")
+        self._mark_ready_btn.setFixedHeight(40)
+        self._mark_ready_btn.setStyleSheet(_btn(T["btn_add"], T["btn_add_h"]))
+        self._mark_ready_btn.clicked.connect(self._start_mark_ready)
+        layout.addWidget(self._mark_ready_btn)
         layout.addSpacing(20)
 
         self._section_label(layout, "LOG")
@@ -124,6 +131,9 @@ class StagingPanelMixin:
         dry_run = self._staging_dryrun.isChecked()
         q       = self._log_queue
         bridge  = self._bridge
+        email   = self._cb_email.text().strip()
+        password = self._cb_password.text().strip()
+        self._save_config(email=email, password=password)
 
         def worker():
             from staging_automator import run_steps_1_2
@@ -140,6 +150,9 @@ class StagingPanelMixin:
                     crn, dry_run=dry_run,
                     prompt_fn=bridge.prompt,
                     note_fn=lambda t: q.put(("note", t)),
+                    email=email,
+                    password=password,
+                    rename_fn=bridge.confirm,
                 ))
             except Exception as e:
                 _sentry_capture(e)
@@ -147,5 +160,39 @@ class StagingPanelMixin:
             finally:
                 sys.stdout = old
                 q.put(("staging", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _start_mark_ready(self):
+        crn = self._staging_crn.text().strip()
+        if not crn:
+            self._log_append(self._staging_log, "⚠  Enter a CRN or URL first.")
+            return
+        self._mark_ready_btn.setEnabled(False)
+        self._mark_ready_btn.setText("Running…")
+        self._staging_log.clear()
+        dry_run = self._staging_dryrun.isChecked()
+        q = self._log_queue
+
+        def worker():
+            from staging_automator import run_mark_ready
+
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("staging", t.rstrip()))
+                def flush(self): pass
+
+            old, sys.stdout = sys.stdout, W()
+            try:
+                asyncio.run(run_mark_ready(crn, dry_run=dry_run))
+            except Exception as e:
+                _sentry_capture(e)
+                q.put(("staging", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                QTimer.singleShot(0, lambda: (
+                    self._mark_ready_btn.setEnabled(True),
+                    self._mark_ready_btn.setText("✓   Mark as Ready  (_Staged -> _Ready)"),
+                ))
 
         threading.Thread(target=worker, daemon=True).start()

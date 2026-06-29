@@ -26,9 +26,9 @@ fi
 source .venv/bin/activate
 
 # Install dependencies if any are missing
-if ! python -c "import customtkinter" &>/dev/null 2>&1; then
+if ! python -c "import PyQt6" &>/dev/null 2>&1; then
     echo "Installing dependencies..."
-    pip install customtkinter playwright pdf2docx
+    pip install -r requirements.txt
 fi
 
 if ! python -c "import playwright" &>/dev/null 2>&1; then
@@ -47,5 +47,5 @@ fi
 python src/auto_update.py
 
 # Launch
-python gui.py
+python gui_pyqt6.py
 read -rp "Press Enter to exit..."

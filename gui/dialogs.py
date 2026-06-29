@@ -39,6 +39,10 @@ class _ThreadBridge(QObject):
         self._review_sig.emit(title, msg)
         self._event.wait()
 
+    def confirm(self, title: str, msg: str) -> bool:
+        answer = self.prompt(f"{title}\n\n{msg}\n\n(y/n)")
+        return answer == "y"
+
     def _on_prompt(self, text: str):
         is_yn = "(y/n)" in text
         msg   = text.replace("(y/n)", "").strip()

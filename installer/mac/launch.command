@@ -13,11 +13,11 @@ if [ ! -d "$HERE/.venv" ]; then
     echo "First-time setup (takes ~5 min)..."
     python3 -m venv "$HERE/.venv"
     source "$HERE/.venv/bin/activate"
-    pip install --quiet customtkinter playwright pdf2docx watchdog
+    pip install --quiet -r "$HERE/requirements.txt"
     python -m playwright install chromium
     echo "installed" > "$HERE/.playwright_installed"
 fi
 
 source "$HERE/.venv/bin/activate"
 python "$HERE/src/auto_update.py"
-python "$HERE/gui.py"
+python "$HERE/gui_pyqt6.py"

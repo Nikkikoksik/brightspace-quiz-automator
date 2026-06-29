@@ -13,11 +13,13 @@ OutputDir=Output
 
 [Files]
 ; Entry-point scripts at app root
-Source: "..\..\gui.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\gui_pyqt6.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\quiz_automator.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\dev.py"; DestDir: "{app}"; Flags: ignoreversion
 ; Library modules under src\
 Source: "..\..\src\*.py"; DestDir: "{app}\src"; Flags: ignoreversion
+Source: "..\..\gui\*.py"; DestDir: "{app}\gui"; Flags: ignoreversion
+Source: "..\..\gui\panels\*.py"; DestDir: "{app}\gui\panels"; Flags: ignoreversion
 Source: "..\..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; Production launcher at app root
 Source: "launch.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -45,6 +47,10 @@ Name: "{group}\Uninstall"; Filename: "{uninstallexe}"
 ; Only remove code files — preserve all user data
 Type: files; Name: "{app}\*.py"
 Type: files; Name: "{app}\src\*.py"
+Type: files; Name: "{app}\gui\*.py"
+Type: files; Name: "{app}\gui\panels\*.py"
+Type: dirifempty; Name: "{app}\gui\panels"
+Type: dirifempty; Name: "{app}\gui"
 Type: dirifempty; Name: "{app}\src"
 Type: files; Name: "{app}\launch.bat"
 Type: files; Name: "{app}\requirements.txt"
