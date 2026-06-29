@@ -4,6 +4,7 @@ from gui.panels.assignments import AssignmentPanelMixin
 from gui.panels.outline    import OutlinePanelMixin
 from gui.panels.notes      import NotesPanelMixin
 from gui.panels.timer_fix  import TimerFixPanelMixin
+from gui.panels.content_cleaner import ContentCleanerPanelMixin
 from gui.panels.queue      import QueuePanelMixin
 from gui.panels.history    import HistoryPanelMixin
 from gui.panels.settings   import SettingsPanelMixin
@@ -15,6 +16,7 @@ __all__ = [
     "OutlinePanelMixin",
     "NotesPanelMixin",
     "TimerFixPanelMixin",
+    "ContentCleanerPanelMixin",
     "QueuePanelMixin",
     "HistoryPanelMixin",
     "SettingsPanelMixin",
