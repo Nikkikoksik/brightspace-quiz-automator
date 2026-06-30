@@ -284,3 +284,70 @@ async def open_quiz_edit(page: Page, name: str):
     await page.mouse.click(edit_coords["x"], edit_coords["y"])
     await page.wait_for_load_state("domcontentloaded")
     await page.wait_for_timeout(800)
+
+
+async def harvest_quiz_edit_urls(page: Page, quiz_url: str) -> list[tuple[str, str]]:
+    """Walk shadow DOM on quiz list to extract (name, edit_url) pairs without clicking Actions menus.
+    Returns empty list if hrefs are null (lazy-rendered) — caller falls back to sequential."""
+    try:
+        await page.goto(quiz_url, wait_until="domcontentloaded", timeout=30000)
+    except Exception:
+        pass
+    try:
+        await page.wait_for_selector(
+            "button[aria-haspopup='true'][aria-label*='Actions for']", timeout=30000
+        )
+    except Exception:
+        return []
+
+    await set_per_page_200(page)
+
+    # Scroll to load all items (same pattern as get_quiz_names)
+    prev_count = -1
+    while True:
+        count = await page.locator(
+            "button[aria-haspopup='true'][aria-label*='Actions for']"
+        ).count()
+        if count == prev_count:
+            break
+        prev_count = count
+        await page.evaluate("window.scrollBy(0, 2000)")
+        await page.wait_for_timeout(300)
+    await page.evaluate("window.scrollTo(0, 0)")
+
+    result = await page.evaluate("""
+        () => {
+            const names = [];
+            const hrefs = [];
+            function walkNames(root) {
+                for (const btn of root.querySelectorAll('button[aria-haspopup="true"]')) {
+                    const label = btn.getAttribute('aria-label') || '';
+                    if (label.startsWith('Actions for '))
+                        names.push(label.replace('Actions for ', '').trim());
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) walkNames(el.shadowRoot);
+                }
+            }
+            function walkHrefs(root) {
+                for (const el of root.querySelectorAll('d2l-menu-item')) {
+                    if ((el.getAttribute('text') || '').trim() === 'Edit') {
+                        const href = el.getAttribute('href') || '';
+                        if (href) hrefs.push(new URL(href, location.origin).href);
+                    }
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) walkHrefs(el.shadowRoot);
+                }
+            }
+            walkNames(document);
+            walkHrefs(document);
+            return { names, hrefs };
+        }
+    """)
+
+    names = result.get("names", [])
+    hrefs = result.get("hrefs", [])
+    if hrefs and len(names) == len(hrefs):
+        return list(zip(names, hrefs))
+    return []
