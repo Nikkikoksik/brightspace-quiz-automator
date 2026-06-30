@@ -109,6 +109,7 @@ async def _quiz_worker(context, queue, results, failed_timer, snapshot, lock, se
                     await open_quiz_edit(page, name)
 
                 before = await read_quiz_before_state(page)
+                timer_out: dict = {}
                 gb_changed = None
                 timer_changed = None
                 if settings.get("rename_moodle_titles"):
@@ -116,7 +117,7 @@ async def _quiz_worker(context, queue, results, failed_timer, snapshot, lock, se
                 if settings.get("set_in_gradebook"):
                     gb_changed = await apply_gradebook(page, dry_run)
                 if settings.get("set_auto_submit"):
-                    ok = await apply_auto_submit(page, dry_run)
+                    ok = await apply_auto_submit(page, dry_run, out=timer_out)
                     timer_changed = ok
                     if ok is False:
                         quiz_failed = True
@@ -128,7 +129,7 @@ async def _quiz_worker(context, queue, results, failed_timer, snapshot, lock, se
                             "name": name,
                             "edit_url": edit_url or "",
                             "before_gradebook": before["gradebook"],
-                            "before_timer_value": before["timer_value"],
+                            "before_timer_value": timer_out.get("timer_value"),
                         })
                 await save_quiz(page, dry_run)
             except Exception as e:

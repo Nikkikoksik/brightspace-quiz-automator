@@ -125,12 +125,21 @@ async def apply_gradebook(page: Page, dry_run: bool) -> bool | None:
             ).first
             await option.click()
             try:
+                # Confirm the change landed. The grade button lives in shadow DOM,
+                # so this MUST walk shadow roots — a flat document.querySelector
+                # returns null and silently times out (~5s of dead wait per quiz).
                 await page.wait_for_function("""
                     () => {
-                        const btn = document.querySelector('button.d2l-grade-info');
-                        if (!btn) return false;
-                        const div = btn.querySelector('div');
-                        return div && !div.textContent.includes('Not in Grade Book');
+                        function find(root) {
+                            for (const btn of root.querySelectorAll('button.d2l-grade-info')) {
+                                const div = btn.querySelector('div');
+                                if (div) return !div.textContent.includes('Not in Grade Book');
+                            }
+                            for (const el of root.querySelectorAll('*'))
+                                if (el.shadowRoot) { const r = find(el.shadowRoot); if (r !== null) return r; }
+                            return null;
+                        }
+                        return find(document) === true;
                     }
                 """, timeout=5000)
             except Exception:
@@ -170,13 +179,17 @@ async def _read_timing_summary(page: Page) -> str | None:
     """)
 
 
-async def apply_auto_submit(page: Page, dry_run: bool):
+async def apply_auto_submit(page: Page, dry_run: bool, out: dict | None = None):
     """Set timer expiry action to 'Automatically submit the quiz attempt'.
 
     Rewritten for D2L's new quiz editor (/d2l/le/activities/edit/...), whose
     controls live in nested shadow DOMs with no stable CSS classes. Every step
     finds its target by visible text via a recursive shadow-DOM walk, then
     clicks real viewport coords — the only approach that survives this UI.
+
+    If `out` is provided, the original (pre-change) timer radio value is stored
+    in out["timer_value"] once the dialog opens — this lets the caller capture
+    the undo value without a second dialog-open in read_quiz_before_state.
     """
 
     async def _coords_by_text(selector, text):
@@ -285,9 +298,27 @@ async def apply_auto_submit(page: Page, dry_run: bool):
         if summary_before and "submit" in summary_before.lower():
             return False
 
-        # 1) Reach the Timer Settings button. Expand the panel only if the button
-        #    isn't already visible — clicking an open panel would collapse it.
-        timer = await _wait_coords("button", "Timer Settings", timeout=1500)
+        # 1) Reach the Timer Settings button. Expand the panel only if it isn't
+        #    already open — clicking an open panel would collapse it. Check the
+        #    panel's aria-expanded state directly (instant) instead of blindly
+        #    polling 1.5s for the Timer Settings button, which used to stall every
+        #    quiz because the panel is normally collapsed.
+        expanded = await page.evaluate("""
+            () => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('button.d2l-collapsible-panel-opener')) {
+                        const t = (el.innerText || el.textContent || '');
+                        if (t.includes('Timing'))
+                            return el.getAttribute('aria-expanded') === 'true';
+                    }
+                    for (const el of root.querySelectorAll('*'))
+                        if (el.shadowRoot) { const r = find(el.shadowRoot); if (r !== null) return r; }
+                    return null;
+                }
+                return find(document);
+            }
+        """)
+        timer = await _coords_by_text("button", "Timer Settings") if expanded else None
         if not timer:
             header = await _coords_by_text("button", "Timing & Display")
             if header:
@@ -330,6 +361,23 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(400)
             return False
+
+        # Capture the ORIGINAL radio value for undo before we change anything.
+        # The dialog is open and the radios are rendered, so this is free — it
+        # replaces the separate dialog-open that read_quiz_before_state used to do.
+        if out is not None:
+            out["timer_value"] = await page.evaluate("""
+                () => {
+                    function find(root) {
+                        for (const el of root.querySelectorAll('input[type="radio"][name="timeLimitOption"]'))
+                            if (el.checked) return el.value;
+                        for (const el of root.querySelectorAll('*'))
+                            if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
+                        return null;
+                    }
+                    return find(document);
+                }
+            """)
 
         if dry_run:
             print("    Timer     : [DRY RUN] Would select auto-submit")
@@ -713,44 +761,18 @@ async def apply_pdf_only_file_type(page: Page, dry_run: bool):
 
 
 async def read_quiz_before_state(page: Page) -> dict:
-    """Read current gradebook + timer radio state before making changes."""
+    """Read current gradebook state before making changes.
+
+    The original timer radio value (for undo) is NOT read here anymore — it is
+    captured by apply_auto_submit via its `out` dict during the dialog-open it
+    already performs, which avoids opening the timer dialog twice per quiz.
+    """
     result = {"gradebook": None, "timer_value": None}
     try:
         grade_btn = page.locator("button.d2l-grade-info").first
         if await grade_btn.count():
             div_text = await grade_btn.locator("div").first.inner_text()
             result["gradebook"] = "Not in Grade Book" not in div_text
-    except Exception:
-        pass
-    try:
-        timing_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Timing")
-        if await timing_btn.count() and await timing_btn.get_attribute("aria-expanded") == "false":
-            await timing_btn.click()
-        try:
-            await page.wait_for_selector("text=Timer Settings", timeout=5000)
-        except Exception:
-            return result
-        timer_link = page.locator("text=Timer Settings").first
-        if not await timer_link.count():
-            return result
-        await timer_link.click()
-        await page.wait_for_selector("input[type='radio'][name='timeLimitOption']", timeout=10000)
-        result["timer_value"] = await page.evaluate("""
-            () => {
-                function find(root) {
-                    for (const el of root.querySelectorAll('input[type="radio"][name="timeLimitOption"]')) {
-                        if (el.checked) return el.value;
-                    }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
-                    }
-                    return null;
-                }
-                return find(document);
-            }
-        """)
-        await page.keyboard.press("Escape")
-        await page.wait_for_timeout(400)
     except Exception:
         pass
     return result

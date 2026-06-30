@@ -315,41 +315,47 @@ async def harvest_quiz_edit_urls(page: Page, quiz_url: str) -> list[tuple[str, s
         await page.wait_for_timeout(300)
     await page.evaluate("window.scrollTo(0, 0)")
 
-    buttons = page.locator("button[aria-haspopup='true'][aria-label*='Actions for']")
-    total = await buttons.count()
-    pairs: list[tuple[str, str | None]] = []
-
-    for i in range(total):
-        btn = buttons.nth(i)
-        label = await btn.get_attribute("aria-label") or ""
-        name = label.replace("Actions for ", "").strip()
-        href = None
-        try:
-            await btn.click()
-            await page.wait_for_timeout(600)
-            href = await page.evaluate("""
-                () => {
-                    function find(root) {
-                        for (const el of root.querySelectorAll('d2l-menu-item')) {
-                            if ((el.getAttribute('text') || '').trim() === 'Edit') {
-                                const h = el.getAttribute('href') || '';
-                                if (h) return new URL(h, location.origin).href;
-                            }
+    # Pair each quiz NAME (from its "Actions for <name>" button) with the
+    # quiz_newedit_properties.d2l?qi=<id> link that sits in the same row. That
+    # link is present in the list DOM without opening any Actions menu, so we
+    # can navigate straight to the editor and skip the per-quiz menu dance.
+    result = await page.evaluate("""
+        () => {
+            const pairs = [];
+            const EDIT_RE = /quiz_newedit_properties\\.d2l\\?qi=\\d+/;
+            function walk(root) {
+                for (const btn of root.querySelectorAll('button[aria-haspopup="true"]')) {
+                    const label = btn.getAttribute('aria-label') || '';
+                    if (!label.startsWith('Actions for ')) continue;
+                    const name = label.replace('Actions for ', '').trim();
+                    // climb ancestors (incl. shadow hosts) to find the row, then
+                    // grab the first qi-bearing edit link inside it.
+                    let el = btn, href = '';
+                    for (let i = 0; i < 8 && el && !href; i++) {
+                        const links = el.querySelectorAll ? el.querySelectorAll('a[href]') : [];
+                        for (const a of links) {
+                            const h = a.getAttribute('href') || '';
+                            if (EDIT_RE.test(h)) { href = new URL(h, location.origin).href; break; }
                         }
-                        for (const el of root.querySelectorAll('*'))
-                            if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
-                        return null;
+                        el = el.parentElement || (el.getRootNode() && el.getRootNode().host);
                     }
-                    return find(document);
+                    if (href) pairs.push([name, href]);
                 }
-            """)
-        except Exception:
-            pass
-        finally:
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(300)
-        pairs.append((name, href))
+                for (const el of root.querySelectorAll('*'))
+                    if (el.shadowRoot) walk(el.shadowRoot);
+            }
+            walk(document);
+            return pairs;
+        }
+    """)
 
-    found = sum(1 for _, u in pairs if u)
-    print(f"  Harvest: {found}/{total} direct edit URLs collected")
-    return pairs
+    if result:
+        # de-dup by name (shadow walk can revisit), preserve order
+        seen, pairs = set(), []
+        for name, href in result:
+            if name not in seen:
+                seen.add(name)
+                pairs.append((name, href))
+        return pairs
+
+    return []
