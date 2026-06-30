@@ -44,7 +44,7 @@ async def apply_rename_title(page: Page, current_name: str, dry_run: bool) -> No
 
 async def _set_points_if_zero(page: Page):
     """After Add to Grade Book, set points to 10 if the field shows 0 or is empty."""
-    fixed = await page.evaluate("""
+    await page.evaluate("""
         () => {
             function fix(root) {
                 for (const inp of root.querySelectorAll('input[type="number"]')) {
@@ -81,8 +81,6 @@ async def _set_points_if_zero(page: Page):
             return fix(document);
         }
     """)
-    if fixed:
-        print("    Gradebook : set points to 10 (was 0)")
 
 
 async def apply_gradebook(page: Page, dry_run: bool) -> bool | None:
@@ -109,7 +107,6 @@ async def apply_gradebook(page: Page, dry_run: bool) -> bool | None:
         grade_btn = page.locator("button.d2l-grade-info").first
 
         if not await grade_btn.count():
-            print("    Gradebook : not found — skipping")
             return None
 
         div_text = await grade_btn.locator("div").first.inner_text()
@@ -118,7 +115,6 @@ async def apply_gradebook(page: Page, dry_run: bool) -> bool | None:
             if dry_run:
                 print("    Gradebook : [DRY RUN] Would switch to In Grade Book")
                 return False
-            print("    Gradebook : Not in Grade Book → switching...")
             await grade_btn.click()
             await page.wait_for_selector(
                 "d2l-menu-item[text='Add to Grade Book'], li:has-text('Add to Grade Book')",
@@ -140,10 +136,8 @@ async def apply_gradebook(page: Page, dry_run: bool) -> bool | None:
             except Exception:
                 pass
             await _set_points_if_zero(page)
-            print("    Gradebook : ✓ Added to Grade Book")
             return True
         else:
-            print("    Gradebook : already In Grade Book — skipping")
             return False
 
     except Exception as e:
@@ -177,46 +171,165 @@ async def _read_timing_summary(page: Page) -> str | None:
 
 
 async def apply_auto_submit(page: Page, dry_run: bool):
-    """Set timer expiry action to 'Automatically submit the quiz attempt'."""
-    try:
-        # Expand the Timing collapsible section if it's collapsed
-        try:
-            await page.wait_for_selector(
-                "button.d2l-collapsible-panel-opener", timeout=15000
-            )
-        except Exception:
-            pass
-        timing_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Timing")
-        if await timing_btn.count():
-            if await timing_btn.get_attribute("aria-expanded") == "false":
-                print("    Timer     : expanding Timing section...")
-                await timing_btn.click()
+    """Set timer expiry action to 'Automatically submit the quiz attempt'.
 
-        # Wait for Timer Settings link — if absent, quiz has no timer
-        try:
-            await page.wait_for_selector("text=Timer Settings", timeout=5000)
-        except Exception:
-            print("    Timer     : no timer configured — skipping")
-            return
+    Rewritten for D2L's new quiz editor (/d2l/le/activities/edit/...), whose
+    controls live in nested shadow DOMs with no stable CSS classes. Every step
+    finds its target by visible text via a recursive shadow-DOM walk, then
+    clicks real viewport coords — the only approach that survives this UI.
+    """
 
-        timer_link = page.locator("text=Timer Settings").first
-        if not await timer_link.count():
-            print("    Timer     : no timer configured — skipping")
-            return
-
-        print("    Timer     : opening Timer Settings...")
-        await timer_link.click()
-        await page.wait_for_selector(
-            "input[type='radio'][name='timeLimitOption'][value='autosubmit']",
-            timeout=30000,
+    async def _coords_by_text(selector, text):
+        """Center coords of the first visible `selector` whose text contains `text`."""
+        return await page.evaluate(
+            """
+            ([selector, text]) => {
+                const norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const want = norm(text);
+                function find(root) {
+                    for (const el of root.querySelectorAll(selector)) {
+                        if (norm(el.textContent).includes(want)) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0 && r.height > 0)
+                                return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*'))
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    return null;
+                }
+                return find(document);
+            }
+            """,
+            [selector, text],
         )
 
-        radio = page.locator("input[type='radio'][name='timeLimitOption'][value='autosubmit']")
-        if await radio.is_checked():
-            print("    Timer     : already auto-submit — skipping")
+    async def _wait_coords(selector, text, timeout=10000, interval=200):
+        """Poll for an element by text; return coords as soon as it's visible, else None.
+
+        Fast on quick loads (returns the moment it appears) and patient on slow
+        Brightspace loads (keeps checking up to `timeout`). No fixed sleeps.
+        """
+        waited = 0
+        while True:
+            c = await _coords_by_text(selector, text)
+            if c:
+                return c
+            if waited >= timeout:
+                return None
+            await page.wait_for_timeout(interval)
+            waited += interval
+
+    async def _summary():
+        """Read the Timing panel summary line (visible even while collapsed)."""
+        return await page.evaluate(
+            """
+            () => {
+                const phrases = ['submit', 'Flag attempts', 'not enforced', 'time is up'];
+                function find(root) {
+                    for (const el of root.querySelectorAll('div, span')) {
+                        const t = (el.textContent || '').trim();
+                        if (t && t.length < 60 && phrases.some(p => t.includes(p))
+                            && el.getBoundingClientRect().width > 0)
+                            return t;
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }
+            """
+        )
+
+    async def _autosubmit_checked():
+        """True if the auto-submit radio is selected. Matched by value, not label
+        text — radio `value` is stable across wording/locale changes."""
+        return await page.evaluate(
+            """
+            () => {
+                function find(root) {
+                    for (const inp of root.querySelectorAll('input[type="radio"]'))
+                        if (inp.value === 'autosubmit') return inp.checked;
+                    for (const el of root.querySelectorAll('*'))
+                        if (el.shadowRoot) { const r = find(el.shadowRoot); if (r !== null) return r; }
+                    return null;
+                }
+                return find(document);
+            }
+            """
+        )
+
+    async def _dialog_open():
+        """True while the Timer Settings dialog (heading exactly 'Timing') is visible."""
+        return await page.evaluate(
+            """
+            () => {
+                function f(r) {
+                    for (const h of r.querySelectorAll('h2'))
+                        if (h.textContent.trim() === 'Timing'
+                            && h.getBoundingClientRect().width > 0) return true;
+                    for (const el of r.querySelectorAll('*'))
+                        if (el.shadowRoot && f(el.shadowRoot)) return true;
+                    return false;
+                }
+                return f(document);
+            }
+            """
+        )
+
+    try:
+        # 0) Already set? The panel summary is readable without opening anything.
+        summary_before = await _summary()
+        if summary_before and "submit" in summary_before.lower():
+            return False
+
+        # 1) Reach the Timer Settings button. Expand the panel only if the button
+        #    isn't already visible — clicking an open panel would collapse it.
+        timer = await _wait_coords("button", "Timer Settings", timeout=1500)
+        if not timer:
+            header = await _coords_by_text("button", "Timing & Display")
+            if header:
+                await page.mouse.click(header["x"], header["y"])
+            timer = await _wait_coords("button", "Timer Settings", timeout=12000)
+        if not timer:
+            print("    Timer     : no timer configured — skipping")
+            return
+
+        # 2) Open the Timer dialog reliably. A click fired immediately after the
+        #    panel expands can be swallowed mid-relayout, so confirm the dialog
+        #    opened and re-click only if it's still closed (re-clicking while it's
+        #    open would hit the backdrop and close it).
+        opened = False
+        for _ in range(3):
+            if await _dialog_open():
+                opened = True
+                break
+            await page.mouse.click(timer["x"], timer["y"])
+            waited = 0
+            while waited < 3000:
+                if await _dialog_open():
+                    opened = True
+                    break
+                await page.wait_for_timeout(200)
+                waited += 200
+            if opened:
+                break
+            timer = await _coords_by_text("button", "Timer Settings") or timer
+        if not opened:
+            print("    Timer     : ⚠ Timing dialog did not open — escaping")
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(400)
-            return True
+            return False
+
+        # Wait for the OPTIONS to render — the radios appear a beat after the modal.
+        opt = await _wait_coords("label", "Automatically submit", timeout=8000)
+        if not opt:
+            print("    Timer     : ⚠ auto-submit option didn't render — escaping")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+            return False
 
         if dry_run:
             print("    Timer     : [DRY RUN] Would select auto-submit")
@@ -224,150 +337,59 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             await page.wait_for_timeout(400)
             return
 
-        # Find radio coordinates for a real pointer-event click
-        print("    Timer     : finding radio button coords...")
-        radio_coords = await page.evaluate("""
-            () => {
-                function labelOf(el, root) {
-                    const p = el.closest('label');
-                    if (p) return p.textContent.trim();
-                    if (el.id) {
-                        const lbl = root.querySelector(`label[for="${el.id}"]`);
-                        if (lbl) return lbl.textContent.trim();
-                    }
-                    return el.nextElementSibling?.textContent?.trim() || '';
-                }
-                function find(root) {
-                    for (const el of root.querySelectorAll('input[type="radio"]')) {
-                        const lbl = labelOf(el, root);
-                        if (lbl.toLowerCase().includes('automatically submit') || el.value === 'autosubmit') {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2, label: lbl };
-                        }
-                    }
-                    for (const el of root.querySelectorAll('*')) {
-                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
-                    }
-                    return null;
-                }
-                return find(document);
-            }
-        """)
-        if not radio_coords:
-            print("    Timer     : ⚠ autosubmit radio not found — skipping")
-            return
-        print(f"    Timer     : clicking radio '{radio_coords.get('label', 'autosubmit')}'...")
-        await _flash_click(page, radio_coords["x"], radio_coords["y"])
-        radio_state = await radio.is_checked()
-        print(f"    Timer     : radio checked = {radio_state}")
-
-        if not radio_state:
-            # Coordinate click missed — fall back to Playwright locator click
-            print("    Timer     : coord click missed — trying locator click...")
-            try:
-                await radio.scroll_into_view_if_needed()
-                await radio.click()
-                radio_state = await radio.is_checked()
-                print(f"    Timer     : radio checked (locator) = {radio_state}")
-            except Exception as e:
-                print(f"    Timer     : locator click failed: {e}")
-
-        if not radio_state:
-            print("    Timer     : ⚠ could not check radio — escaping dialog")
+        # 3) Select auto-submit and CONFIRM the radio actually took before
+        #    committing — otherwise OK closes the dialog on the old value.
+        selected = False
+        for _ in range(4):
+            await _flash_click(page, opt["x"], opt["y"])
+            waited = 0
+            while waited < 1500:
+                if await _autosubmit_checked():
+                    selected = True
+                    break
+                await page.wait_for_timeout(150)
+                waited += 150
+            if selected:
+                break
+            opt = await _coords_by_text("label", "Automatically submit") or opt
+        if not selected:
+            print("    Timer     : ⚠ could not select auto-submit radio — escaping")
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(400)
             return False
 
-        # Click the OK button directly by coordinates (more reliable than Enter key)
-        ok_coords = await _find_button_coords(page, "OK")
-        if ok_coords:
-            print(f"    Timer     : clicking OK at ({ok_coords['x']:.0f}, {ok_coords['y']:.0f})...")
-            await _flash_click(page, ok_coords["x"], ok_coords["y"])
+        # 4) Commit by clicking OK. Enter does NOT close this dialog in the new
+        #    editor (verified live) — the OK button must be clicked by coords.
+        ok = await _find_button_coords(page, "OK")
+        if ok:
+            await _flash_click(page, ok["x"], ok["y"])
         else:
-            print("    Timer     : OK button not found — pressing Enter as fallback")
             await page.keyboard.press("Enter")
-        print("    Timer     : waiting for dialog to close...")
 
+        # 5) Wait for the dialog to close.
         try:
-            await page.wait_for_function("""
-                () => {
-                    function hasOk(root) {
-                        for (const el of root.querySelectorAll('d2l-button[slot="footer"]')) {
-                            if (el.textContent.trim() === 'OK' && el.getBoundingClientRect().width > 0)
-                                return true;
-                        }
-                        for (const el of root.querySelectorAll('*')) {
-                            if (el.shadowRoot && hasOk(el.shadowRoot)) return true;
-                        }
-                        return false;
-                    }
-                    return !hasOk(document);
-                }
-            """, timeout=10000)
-            print("    Timer     : dialog closed ✓")
-        except Exception:
-            print("    Timer     : ⚠ dialog did not close after 10s — OK click may have missed")
-        summary_after = await _read_timing_summary(page)
-        print(f"    Timer     : summary after OK = '{summary_after}'")
-
-        if summary_after == "Auto-submit when time is up":
-            return True
-
-        if summary_after != "Auto-submit when time is up":
-            print("    Timer     : ⚠ summary did not update — retrying once...")
-            await timer_link.click()
-            await page.wait_for_selector(
-                "input[type='radio'][name='timeLimitOption'][value='autosubmit']",
-                timeout=15000,
+            await page.wait_for_function(
+                "() => { const f = r => { for (const h of r.querySelectorAll('h2'))"
+                " if (h.textContent.trim() === 'Timing' && h.getBoundingClientRect().width > 0) return true;"
+                " for (const el of r.querySelectorAll('*')) if (el.shadowRoot && f(el.shadowRoot)) return true;"
+                " return false; }; return !f(document); }",
+                timeout=10000,
             )
-            retry_radio_coords = await page.evaluate("""
-                () => {
-                    function find(root) {
-                        for (const el of root.querySelectorAll('input[type="radio"]')) {
-                            if (el.value === 'autosubmit' ||
-                                (el.closest('label') || {}).textContent?.toLowerCase().includes('automatically submit')) {
-                                const r = el.getBoundingClientRect();
-                                if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-                            }
-                        }
-                        for (const el of root.querySelectorAll('*')) {
-                            if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
-                        }
-                        return null;
-                    }
-                    return find(document);
-                }
-            """)
-            if retry_radio_coords:
-                await _flash_click(page, retry_radio_coords["x"], retry_radio_coords["y"])
-            retry_radio_state = await radio.is_checked()
-            if not retry_radio_state:
-                print("    Timer     : retry coord click missed — trying locator click...")
-                try:
-                    await radio.scroll_into_view_if_needed()
-                    await radio.click()
-                    retry_radio_state = await radio.is_checked()
-                    print(f"    Timer     : retry radio checked (locator) = {retry_radio_state}")
-                except Exception as e:
-                    print(f"    Timer     : retry locator click failed: {e}")
-            if not retry_radio_state:
-                print("    Timer     : ⚠ retry could not check radio — escaping")
-                await page.keyboard.press("Escape")
-                await page.wait_for_timeout(400)
-                return False
-            retry_ok_coords = await _find_button_coords(page, "OK")
-            if retry_ok_coords:
-                print(f"    Timer     : retry — clicking OK at ({retry_ok_coords['x']:.0f}, {retry_ok_coords['y']:.0f})...")
-                await _flash_click(page, retry_ok_coords["x"], retry_ok_coords["y"])
-            else:
-                await page.keyboard.press("Enter")
-            summary_retry = await _read_timing_summary(page)
-            if summary_retry == "Auto-submit when time is up":
-                print("    Timer     : ✓ retry succeeded")
+        except Exception:
+            print("    Timer     : ⚠ dialog did not close after 10s")
+
+        # 6) Verify via the panel summary — poll, since it refreshes a beat after close.
+        summary_after = None
+        waited = 0
+        while waited < 4000:
+            summary_after = await _summary()
+            if summary_after and "submit" in summary_after.lower():
+                print("    Timer     : ✓ auto-submit set")
                 return True
-            else:
-                print(f"    Timer     : ✗ FAILED — still '{summary_retry}' after retry")
-                return False
+            await page.wait_for_timeout(250)
+            waited += 250
+        print(f"    Timer     : ✗ FAILED — summary still '{summary_after}'")
+        return False
 
     except Exception as e:
         print(f"    Timer     : ✗ {e}")
@@ -426,20 +448,20 @@ async def save_quiz(page: Page, dry_run: bool):
     try:
         save_coords = await _find_button_coords(page, "Save")
         if save_coords:
-            print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
             await _flash_click(page, save_coords["x"], save_coords["y"])
-            print("    Save      : Save clicked ✓")
-        else:
-            print("    Save      : ⚠ Save button not found — skipping intermediate save")
 
         sac_coords = await _find_button_coords(page, "Save and Close")
         if not sac_coords:
             raise Exception("Save and Close button not found")
-        print(f"    Save      : clicking Save and Close at ({sac_coords['x']}, {sac_coords['y']})...")
         await _flash_click(page, sac_coords["x"], sac_coords["y"])
-        print("    Save      : clicked — waiting for navigation...")
-        await page.wait_for_load_state("domcontentloaded", timeout=12000)
-        print(f"    Save      : ✓  (landed on {page.url[-60:]})")
+        # Navigation-safe wait: the editor tears down on save, so we wait for the
+        # real landing on Manage Quizzes — a URL you only reach if the save
+        # actually committed. 30s ceiling tolerates slow PCs / slow Brightspace.
+        try:
+            await page.wait_for_url("**/quizzes_manage.d2l*", timeout=30000)
+            print("    Save      : ✓ saved & closed")
+        except Exception:
+            print("    Save      : ⚠ did not land on Manage Quizzes within 30s")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
 
@@ -688,6 +710,143 @@ async def apply_pdf_only_file_type(page: Page, dry_run: bool):
 
     except Exception as e:
         print(f"    FileType  : ✗ {e}")
+
+
+async def read_quiz_before_state(page: Page) -> dict:
+    """Read current gradebook + timer radio state before making changes."""
+    result = {"gradebook": None, "timer_value": None}
+    try:
+        grade_btn = page.locator("button.d2l-grade-info").first
+        if await grade_btn.count():
+            div_text = await grade_btn.locator("div").first.inner_text()
+            result["gradebook"] = "Not in Grade Book" not in div_text
+    except Exception:
+        pass
+    try:
+        timing_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Timing")
+        if await timing_btn.count() and await timing_btn.get_attribute("aria-expanded") == "false":
+            await timing_btn.click()
+        try:
+            await page.wait_for_selector("text=Timer Settings", timeout=5000)
+        except Exception:
+            return result
+        timer_link = page.locator("text=Timer Settings").first
+        if not await timer_link.count():
+            return result
+        await timer_link.click()
+        await page.wait_for_selector("input[type='radio'][name='timeLimitOption']", timeout=10000)
+        result["timer_value"] = await page.evaluate("""
+            () => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('input[type="radio"][name="timeLimitOption"]')) {
+                        if (el.checked) return el.value;
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }
+        """)
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(400)
+    except Exception:
+        pass
+    return result
+
+
+async def revert_gradebook(page: Page) -> bool:
+    """Switch quiz from In Grade Book back to Not in Grade Book."""
+    try:
+        grade_btn = page.locator("button.d2l-grade-info").first
+        if not await grade_btn.count():
+            print("    Revert GB : grade button not found — skipping")
+            return False
+        div_text = await grade_btn.locator("div").first.inner_text()
+        if "Not in Grade Book" in div_text:
+            print("    Revert GB : already Not in Grade Book — skipping")
+            return False
+        await grade_btn.click()
+        await page.wait_for_selector(
+            "d2l-menu-item[text='Remove from Grade Book'], li:has-text('Remove from Grade Book')",
+            timeout=5000,
+        )
+        option = page.locator(
+            "d2l-menu-item[text='Remove from Grade Book'], li:has-text('Remove from Grade Book')"
+        ).first
+        await option.click()
+        print("    Revert GB : ✓ Removed from Grade Book")
+        return True
+    except Exception as e:
+        print(f"    Revert GB : ✗ {e}")
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return False
+
+
+async def revert_auto_submit(page: Page, original_value: str) -> bool:
+    """Restore timer expiry radio to original_value."""
+    try:
+        timing_btn = page.locator("button.d2l-collapsible-panel-opener").filter(has_text="Timing")
+        if await timing_btn.count() and await timing_btn.get_attribute("aria-expanded") == "false":
+            await timing_btn.click()
+        try:
+            await page.wait_for_selector("text=Timer Settings", timeout=5000)
+        except Exception:
+            print("    Revert Timer: Timer Settings not found — skipping")
+            return False
+        timer_link = page.locator("text=Timer Settings").first
+        if not await timer_link.count():
+            return False
+        await timer_link.click()
+        await page.wait_for_selector("input[type='radio'][name='timeLimitOption']", timeout=15000)
+        radio = page.locator(f"input[type='radio'][name='timeLimitOption'][value='{original_value}']")
+        if await radio.is_checked():
+            print(f"    Revert Timer: already '{original_value}' — skipping")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+            return False
+        coords = await page.evaluate("""
+            (val) => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('input[type="radio"]')) {
+                        if (el.value === val) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }
+        """, original_value)
+        if not coords:
+            print(f"    Revert Timer: ⚠ radio '{original_value}' not found")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+            return False
+        await _flash_click(page, coords["x"], coords["y"])
+        ok_coords = await _find_button_coords(page, "OK")
+        if ok_coords:
+            await _flash_click(page, ok_coords["x"], ok_coords["y"])
+        else:
+            await page.keyboard.press("Enter")
+        await page.wait_for_timeout(500)
+        print(f"    Revert Timer: ✓ restored to '{original_value}'")
+        return True
+    except Exception as e:
+        print(f"    Revert Timer: ✗ {e}")
+        try:
+            await page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return False
 
 
 async def save_assignment(page: Page, dry_run: bool):
