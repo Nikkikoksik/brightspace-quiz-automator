@@ -21,11 +21,8 @@ if os.name == "nt":
     _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
 else:
     _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
-_BS_PROFILE = str(_USERDATA_DIR / "bs_profile")
-if os.name == "nt":
-    _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
-else:
-    _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
+
+from browser import _BS_PROFILE, _load_bs_credentials, _wait_for_login
 
 SKIP_MODULES = {
     "How to Use This Blueprint",
@@ -571,38 +568,6 @@ async def pre_scan_topics(page: Page, topics: list[dict]) -> list[dict]:
     return [t for t in topics if t["TopicId"] in keep_ids]
 
 
-async def _wait_for_login(page):
-    """Navigate to Brightspace, wait for user login."""
-    print("Opening Brightspace...")
-    await page.goto(BRIGHTSPACE_BASE)
-    print("─" * 50)
-    print("  Log in with your Okanagan College account.")
-    print("  Complete any MFA steps (email code, authenticator, etc.).")
-    print("  Script continues automatically once you reach the home page.")
-    print("─" * 50)
-    for i in range(180):
-        await page.wait_for_timeout(3000)
-        url = page.url
-        if "learn.okanagancollege.ca" in url and "microsoftonline.com" not in url:
-            has_login_form = await page.evaluate("() => !!document.querySelector('#userName')")
-            if has_login_form:
-                continue
-            try:
-                await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home", timeout=15000)
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                await page.wait_for_timeout(2000)
-            except Exception:
-                pass
-            if "/d2l/home" in page.url:
-                break
-        if i % 10 == 0 and i > 0:
-            print(f"  Still waiting... ({i * 3}s)  |  {page.url[:80]}")
-    else:
-        raise RuntimeError("Login timed out after 9 minutes")
-    print("✓ Logged in")
-    await page.wait_for_load_state("networkidle", timeout=20000)
-
-
 async def scan_course(course_url: str, dry_run: bool = False) -> None:
     """Main entry point: scan all HTML topics in a course and replace Moodle references."""
     if dry_run:
@@ -618,7 +583,7 @@ async def scan_course(course_url: str, dry_run: bool = False) -> None:
         )
         page = await context.new_page()
 
-        await _wait_for_login(page)
+        await _wait_for_login(page, context)
 
         course_id = await _resolve_course_id(page, course_url)
 
