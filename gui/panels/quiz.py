@@ -1,10 +1,12 @@
 import asyncio
 import sys
 import threading
+from pathlib import Path
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QCheckBox, QLineEdit, QMessageBox, QPushButton, QWidget
 
+from gui.constants import UNDO_SNAPSHOT_FILE
 from gui.telemetry import _sentry_capture, _sentry_context
 from gui.theme import T, _btn, _checkbox_style, _entry_style
 
@@ -57,6 +59,14 @@ class QuizPanelMixin:
         self._quiz_verify_btn.setStyleSheet(_btn("#1a2e1a", "#2a4a2a"))
         self._quiz_verify_btn.clicked.connect(self._start_quiz_verify)
         layout.addWidget(self._quiz_verify_btn)
+        layout.addSpacing(6)
+
+        self._quiz_undo_btn = QPushButton("↩  Undo Last Run")
+        self._quiz_undo_btn.setFixedHeight(38)
+        self._quiz_undo_btn.setStyleSheet(_btn("#2e1a1a", "#4a2a2a"))
+        self._quiz_undo_btn.clicked.connect(self._start_quiz_undo)
+        self._quiz_undo_btn.setEnabled(Path(UNDO_SNAPSHOT_FILE).exists())
+        layout.addWidget(self._quiz_undo_btn)
         layout.addSpacing(12)
 
         self._section_label(layout, "LOG")
@@ -73,6 +83,7 @@ class QuizPanelMixin:
         self._quiz_run_btn.setEnabled(False)
         self._quiz_run_btn.setText("Running…")
         self._quiz_verify_btn.setEnabled(False)
+        self._quiz_undo_btn.setEnabled(False)
         self._resume_event.set()
         self._quiz_log.clear()
         settings = {
@@ -203,3 +214,30 @@ class QuizPanelMixin:
         )
         if r == QMessageBox.StandardButton.Yes:
             self._run_assignments_for(self._last_quiz_urls)
+
+    def _start_quiz_undo(self):
+        self._quiz_undo_btn.setEnabled(False)
+        self._quiz_undo_btn.setText("Undoing…")
+        self._quiz_run_btn.setEnabled(False)
+        self._quiz_verify_btn.setEnabled(False)
+        self._quiz_log.clear()
+        q = self._log_queue
+
+        def worker():
+            class W:
+                def write(self, t):
+                    if t.strip(): q.put(("quiz", t.rstrip()))
+                def flush(self): pass
+
+            old, sys.stdout = sys.stdout, W()
+            try:
+                from browser import run_undo
+                asyncio.run(run_undo(UNDO_SNAPSHOT_FILE))
+            except Exception as e:
+                _sentry_capture(e)
+                q.put(("quiz", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("quiz", "__UNDO_DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
