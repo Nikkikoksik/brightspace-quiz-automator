@@ -102,9 +102,12 @@ git merge main --no-edit               # (keeps dev and main at the same commit)
 git push origin dev
 
 git switch nick                         # move back to your working branch
+git rebase dev                          # bring nick up to date with the release commit
+git push origin nick --force-with-lease # push the rebased nick to GitHub
 ```
 > Run this when dev is stable and you want to publish a release. Always do the "Committing and Pushing to Dev" block first.
 > The `git switch dev; git merge main` step prevents dev from showing "X commits behind main" in GitHub.
+> The final rebase keeps nick in sync so you don't start the next session behind.
 
 ## Git — See Recent Commits
 
