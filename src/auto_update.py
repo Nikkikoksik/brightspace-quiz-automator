@@ -109,7 +109,6 @@ def main(ask_restart_fn=None):
     If None, falls back to a terminal prompt (CLI mode).
     """
     if (HERE / ".git").exists():
-        print("Git checkout detected — skipping auto-update (use git pull instead)")
         return
 
     print("Checking for updates...")

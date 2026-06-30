@@ -23,5 +23,7 @@ pause & exit /b 1
 
 :run
 "%PY%" src\auto_update.py
+"%PY%" -c "import PyQt6" >nul 2>&1
+if errorlevel 1 "%PY%" -m pip install PyQt6 -q
 "%PY%" gui_pyqt6.py
 pause

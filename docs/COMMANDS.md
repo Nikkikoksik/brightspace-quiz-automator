@@ -96,14 +96,6 @@ git switch main                         # move to the main branch
 git pull                                # refresh from GitHub before writing to it
 git merge dev --no-edit                 # merge the latest dev into main
 git push origin main                    # upload main to GitHub (safe — no force)
-
-git switch dev                          # sync dev back up to main's merge commit
-git merge main --no-edit               # (keeps dev and main at the same commit)
-git push origin dev
-
-git switch nick                         # move back to your working branch
-git rebase dev                          # bring nick up to date with the release commit
-git push origin nick --force-with-lease # push the rebased nick to GitHub
 ```
 > Run this when dev is stable and you want to publish a release. Always do the "Committing and Pushing to Dev" block first.
 > The `git switch dev; git merge main` step prevents dev from showing "X commits behind main" in GitHub.

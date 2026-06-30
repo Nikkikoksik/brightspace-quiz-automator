@@ -286,9 +286,9 @@ async def open_quiz_edit(page: Page, name: str):
     await page.wait_for_timeout(800)
 
 
-async def harvest_quiz_edit_urls(page: Page, quiz_url: str) -> list[tuple[str, str]]:
-    """Walk shadow DOM on quiz list to extract (name, edit_url) pairs without clicking Actions menus.
-    Returns empty list if hrefs are null (lazy-rendered) — caller falls back to sequential."""
+async def harvest_quiz_edit_urls(page: Page, quiz_url: str) -> list[tuple[str, str | None]]:
+    """Click each Actions menu to force D2L to render edit hrefs, collect (name, url_or_None) pairs.
+    Always returns the full quiz list — individual None entries fall back to action-menu in the worker."""
     try:
         await page.goto(quiz_url, wait_until="domcontentloaded", timeout=30000)
     except Exception:
@@ -302,7 +302,7 @@ async def harvest_quiz_edit_urls(page: Page, quiz_url: str) -> list[tuple[str, s
 
     await set_per_page_200(page)
 
-    # Scroll to load all items (same pattern as get_quiz_names)
+    # Scroll until no new buttons appear
     prev_count = -1
     while True:
         count = await page.locator(
@@ -315,39 +315,41 @@ async def harvest_quiz_edit_urls(page: Page, quiz_url: str) -> list[tuple[str, s
         await page.wait_for_timeout(300)
     await page.evaluate("window.scrollTo(0, 0)")
 
-    result = await page.evaluate("""
-        () => {
-            const names = [];
-            const hrefs = [];
-            function walkNames(root) {
-                for (const btn of root.querySelectorAll('button[aria-haspopup="true"]')) {
-                    const label = btn.getAttribute('aria-label') || '';
-                    if (label.startsWith('Actions for '))
-                        names.push(label.replace('Actions for ', '').trim());
-                }
-                for (const el of root.querySelectorAll('*')) {
-                    if (el.shadowRoot) walkNames(el.shadowRoot);
-                }
-            }
-            function walkHrefs(root) {
-                for (const el of root.querySelectorAll('d2l-menu-item')) {
-                    if ((el.getAttribute('text') || '').trim() === 'Edit') {
-                        const href = el.getAttribute('href') || '';
-                        if (href) hrefs.push(new URL(href, location.origin).href);
-                    }
-                }
-                for (const el of root.querySelectorAll('*')) {
-                    if (el.shadowRoot) walkHrefs(el.shadowRoot);
-                }
-            }
-            walkNames(document);
-            walkHrefs(document);
-            return { names, hrefs };
-        }
-    """)
+    buttons = page.locator("button[aria-haspopup='true'][aria-label*='Actions for']")
+    total = await buttons.count()
+    pairs: list[tuple[str, str | None]] = []
 
-    names = result.get("names", [])
-    hrefs = result.get("hrefs", [])
-    if hrefs and len(names) == len(hrefs):
-        return list(zip(names, hrefs))
-    return []
+    for i in range(total):
+        btn = buttons.nth(i)
+        label = await btn.get_attribute("aria-label") or ""
+        name = label.replace("Actions for ", "").strip()
+        href = None
+        try:
+            await btn.click()
+            await page.wait_for_timeout(600)
+            href = await page.evaluate("""
+                () => {
+                    function find(root) {
+                        for (const el of root.querySelectorAll('d2l-menu-item')) {
+                            if ((el.getAttribute('text') || '').trim() === 'Edit') {
+                                const h = el.getAttribute('href') || '';
+                                if (h) return new URL(h, location.origin).href;
+                            }
+                        }
+                        for (const el of root.querySelectorAll('*'))
+                            if (el.shadowRoot) { const r = find(el.shadowRoot); if (r) return r; }
+                        return null;
+                    }
+                    return find(document);
+                }
+            """)
+        except Exception:
+            pass
+        finally:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(300)
+        pairs.append((name, href))
+
+    found = sum(1 for _, u in pairs if u)
+    print(f"  Harvest: {found}/{total} direct edit URLs collected")
+    return pairs

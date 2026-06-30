@@ -270,10 +270,8 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
 
             pairs = await harvest_quiz_edit_urls(page, quiz_url)
             if pairs:
-                print(f"  Harvest: {len(pairs)} edit URLs — using {WORKER_COUNT} parallel workers")
                 pairs = pairs[start_from - 1:end_at]
             else:
-                print(f"  Harvest: no direct URLs found — {WORKER_COUNT} parallel workers will use action menu")
                 pairs = [(n, None) for n in names]
 
             queue: asyncio.Queue = asyncio.Queue()
