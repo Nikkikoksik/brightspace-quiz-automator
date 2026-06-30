@@ -3,12 +3,16 @@
 ## Running the App
 
 ```powershell
-# Launch the GUI (normal use)
-.\run.bat
+# DEV — test your local edits (no GitHub pull, safe with uncommitted changes)
+.\dev.bat
 
-# Or directly
-py gui.py
+# PRODUCTION — what coworkers actually run (pulls latest from GitHub FIRST)
+.\run.bat
 ```
+> **`run.bat` overwrites uncommitted local changes** with whatever is on GitHub `main`.
+> Never run it while you have edits in VS Code you haven't committed yet — it WILL wipe them.
+> Use `dev.bat` for all day-to-day testing. Only use `run.bat` to confirm what coworkers will get
+> (and only after you've pushed your changes to `main`).
 
 ---
 
@@ -28,6 +32,25 @@ git branch
 ```
 > The branch with `*` is your current one. You should always be on `nick` when making changes.
 > If you're not: `git checkout nick`
+
+---
+
+## Git — Am I Synced to GitHub?
+
+```powershell
+git status -sb
+```
+> Top line looks like `## nick...origin/nick`. No `[ahead N]` or `[behind M]` after it = your branch
+> matches GitHub exactly. Any line below starting with `M` (modified) or `??` (new/untracked) means
+> you have uncommitted changes — those are NOT on GitHub yet, and `run.bat` would wipe them.
+
+```powershell
+# Confirm main, dev, and nick are all the same commit (fully promoted + synced)
+git log --oneline -1 nick
+git log --oneline -1 dev
+git log --oneline -1 main
+```
+> Same commit hash on all three = everything is synced top to bottom.
 
 ---
 
@@ -53,53 +76,45 @@ git commit -m "Ignore filename.txt"
 ## Git — Before Starting Work (run every session)
 
 ```powershell
-git fetch                               # download latest changes from GitHub (doesn't touch your files yet)
-git switch dev                          # move to the dev branch
-git pull                                # apply those downloaded changes to your local dev
-git switch nick                         # move back to your working branch
-git rebase dev                          # bring your changes up to date with dev
-git push origin nick --force-with-lease # push your rebased nick to GitHub (--force-with-lease is safe here)
+git fetch origin                        # download latest changes from GitHub (doesn't touch your files yet)
+git status -sb                          # check you're synced and have no uncommitted changes (see below)
 ```
-> Run this at the start of every session so nick is in sync with dev before you start working.
+> If `nick` is behind `origin/nick`, someone (or another session) pushed since you last worked here —
+> `git pull` to catch up before making changes. If you have uncommitted changes, commit or discuss
+> them first; don't pull on top of dirty local edits.
 
 ---
 
-## Git — Committing and Pushing to Dev
+## Git — Save Your Work and Sync All Branches
+
+This is the full recipe: commit your changes, push nick, then promote nick → dev → main.
+Only promote to main once you've actually tested the change (run it via `dev.bat` and confirm it works).
 
 ```powershell
-git status                              # It shows you every file that changed. You'll see something like: 
-#modified:   gui.py or modified:   src/actions.py
+# 1. Save your work to nick
+git add -A                                # stage all changed/new files
+                                           # or specific files: git add gui.py src/actions.py
+git commit -m "describe what you changed"
+git push origin nick
 
-git add -A     # stages ALL changed and NEW files (new folders like gui/ need this)
-               # if you only want specific files: git add gui.py src/actions.py
+# 2. Promote nick -> dev
+git checkout dev
+git merge --ff-only nick
+git push origin dev
 
-git commit -m "describe what you changed" # save a snapshot with a message
+# 3. Promote dev -> main (coworkers get this on their next run.bat)
+git checkout main
+git merge --ff-only dev
+git push origin main
 
-git push origin nick --force-with-lease   # "send my local nick branch up to GitHub"
-# origin — the name for your GitHub repo (it's just an alias git sets up automatically when you clone)
-
-#nick — which branch to push
-git switch dev                          # move to the dev branch
-
-git merge nick --no-edit               # merge your changes into dev (--no-edit skips the vim prompt)
-git push origin dev                     # upload the updated dev to GitHub
-git switch nick                         # move back to your working branch
+# 4. Go back to your working branch
+git checkout nick
 ```
-> The `--no-edit` flag stops vim from opening during the merge — always include it.
 
----
-
-## Git — Promoting Dev to Main (release)
-
-```powershell
-git switch main                         # move to the main branch
-git pull                                # refresh from GitHub before writing to it
-git merge dev --no-edit                 # merge the latest dev into main
-git push origin main                    # upload main to GitHub (safe — no force)
-```
-> Run this when dev is stable and you want to publish a release. Always do the "Committing and Pushing to Dev" block first.
-> The `git switch dev; git merge main` step prevents dev from showing "X commits behind main" in GitHub.
-> The final rebase keeps nick in sync so you don't start the next session behind.
+> **`--ff-only`** means "only merge if it's a clean fast-forward — refuse if histories diverged."
+> If a merge step FAILS with "not possible to fast-forward," STOP and ask for help instead of
+> forcing it — it means dev or main has commits that nick doesn't (e.g. someone else pushed, or a
+> branch fell behind). Resolving that safely needs a look at what's different first.
 
 ## Git — See Recent Commits
 
