@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from gui.constants import (
-    COURSES_FILE, ICON_PATH, OUTLINE_CFG, SESSION_FILE_GUI, VERSION,
+    COURSES_FILE, ICON_PATH, OUTLINE_CFG, SESSION_FILE_GUI, UNDO_SNAPSHOT_FILE, VERSION,
 )
 from gui.dialogs import _ThreadBridge
 from gui.panels import (
@@ -316,6 +316,7 @@ class App(
                     self._quiz_run_btn.setEnabled(True)
                     self._quiz_run_btn.setText("▶  Run Quizzes")
                     self._quiz_verify_btn.setEnabled(True)
+                    self._quiz_undo_btn.setEnabled(Path(UNDO_SNAPSHOT_FILE).exists())
                     self._resume_event.set()
                     QTimer.singleShot(0, self._post_quiz_review)
                 elif msg == "__ASSIGN_DONE__":
@@ -323,11 +324,17 @@ class App(
                     self._assign_run_btn.setText("▶  Run Assignments")
                     self._resume_event.set()
                     QTimer.singleShot(0, self._post_assign_review)
+                elif msg == "__UNDO_DONE__":
+                    self._quiz_undo_btn.setEnabled(Path(UNDO_SNAPSHOT_FILE).exists())
+                    self._quiz_undo_btn.setText("↩  Undo Last Run")
+                    self._quiz_run_btn.setEnabled(True)
+                    self._quiz_verify_btn.setEnabled(True)
                 elif msg == "__DONE__":
                     if tag == "quiz":
                         self._quiz_run_btn.setEnabled(True)
                         self._quiz_run_btn.setText("▶  Run Quizzes")
                         self._quiz_verify_btn.setEnabled(True)
+                        self._quiz_undo_btn.setEnabled(Path(UNDO_SNAPSHOT_FILE).exists())
                         self._resume_event.set()
                     elif tag == "assign":
                         self._assign_run_btn.setEnabled(True)

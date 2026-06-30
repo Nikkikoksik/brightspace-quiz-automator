@@ -7,7 +7,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200, harvest_quiz_edit_urls
-from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary, apply_pdf_only_file_type, apply_rename_title
+from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary, apply_pdf_only_file_type, apply_rename_title, read_quiz_before_state, revert_gradebook, revert_auto_submit
 
 if os.name == "nt":
     _USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
@@ -15,8 +15,9 @@ else:
     _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
 _USERDATA_DIR.mkdir(parents=True, exist_ok=True)
 
-SESSION_FILE = str(_USERDATA_DIR / "session.json")
-STATS_FILE   = str(_USERDATA_DIR / "timing_stats.json")
+SESSION_FILE       = str(_USERDATA_DIR / "session.json")
+STATS_FILE         = str(_USERDATA_DIR / "timing_stats.json")
+UNDO_SNAPSHOT_FILE = str(_USERDATA_DIR / "undo_snapshot.json")
 _BS_PROFILE  = str(Path(__file__).parent.parent / "bs_profile")
 _OUTLINE_CFG = _USERDATA_DIR / "outline_config.json"
 WORKER_COUNT = 3
@@ -31,7 +32,7 @@ def _load_bs_credentials():
         return "", ""
 
 
-def _print_run_summary(results: list, kind: str = "item"):
+def _print_run_summary(results: list, kind: str = "item", wall_time: float | None = None):
     W = 54
     errors   = [r for r in results if r["failed"]]
     ok_times = [r["elapsed"] for r in results if not r["failed"]]
@@ -44,7 +45,11 @@ def _print_run_summary(results: list, kind: str = "item"):
         note = "FAILED" if r["failed"] else f"{r['elapsed']:.1f}s"
         print(f"  {status}  {name:<39}{note}")
     print(f"{'─' * W}")
-    parts = [f"Avg time : {sum(ok_times)/len(ok_times):.1f}s"] if ok_times else []
+    parts = []
+    if ok_times:
+        parts.append(f"Avg : {sum(ok_times)/len(ok_times):.1f}s")
+    if wall_time is not None:
+        parts.append(f"Total : {wall_time:.0f}s")
     parts.append(f"Errors : {len(errors)}" if errors else "All OK ✓")
     print("  " + "   ·   ".join(parts))
     print(f"{'─' * W}")
@@ -70,7 +75,7 @@ def _save_timing(course_url: str, quiz_name: str, elapsed_s: float):
         pass
 
 
-async def _quiz_worker(context, queue, results, failed_timer, lock, settings, dry_run, quiz_url, worker_id):
+async def _quiz_worker(context, queue, results, failed_timer, snapshot, lock, settings, dry_run, quiz_url, worker_id):
     page = await context.new_page()
     try:
         while True:
@@ -78,7 +83,7 @@ async def _quiz_worker(context, queue, results, failed_timer, lock, settings, dr
                 idx, name, edit_url = queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-            print(f"\n[{idx}]  [{name}]  (W{worker_id})")
+            print(f"\n  [{idx}] {name}")
             t_start = time.time()
             quiz_failed = False
             try:
@@ -103,16 +108,28 @@ async def _quiz_worker(context, queue, results, failed_timer, lock, settings, dr
                     )
                     await open_quiz_edit(page, name)
 
+                before = await read_quiz_before_state(page)
+                gb_changed = None
+                timer_changed = None
                 if settings.get("rename_moodle_titles"):
                     await apply_rename_title(page, name, dry_run)
                 if settings.get("set_in_gradebook"):
-                    await apply_gradebook(page, dry_run)
+                    gb_changed = await apply_gradebook(page, dry_run)
                 if settings.get("set_auto_submit"):
                     ok = await apply_auto_submit(page, dry_run)
+                    timer_changed = ok
                     if ok is False:
                         quiz_failed = True
                         async with lock:
                             failed_timer.append(f"[{idx}] {name}")
+                if not dry_run and (gb_changed is True or timer_changed is True):
+                    async with lock:
+                        snapshot.append({
+                            "name": name,
+                            "edit_url": edit_url or "",
+                            "before_gradebook": before["gradebook"],
+                            "before_timer_value": before["timer_value"],
+                        })
                 await save_quiz(page, dry_run)
             except Exception as e:
                 quiz_failed = True
@@ -124,7 +141,7 @@ async def _quiz_worker(context, queue, results, failed_timer, lock, settings, dr
                 results.append({"name": name, "elapsed": elapsed, "failed": quiz_failed})
             if not quiz_failed and not dry_run:
                 _save_timing(quiz_url, name, elapsed)
-            print(f"    Timing    : {elapsed:.1f}s  (W{worker_id})")
+            print(f"  [{idx}] {'✓' if not quiz_failed else '✗'}  {elapsed:.1f}s")
     finally:
         await page.close()
 
@@ -191,6 +208,13 @@ async def run_bs_login():
 
 
 async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None):
+    snapshot: list = []
+    if not dry_run:
+        try:
+            with open(UNDO_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+                json.dump([], f)
+        except Exception:
+            pass
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
@@ -256,11 +280,13 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             for idx, (qname, edit_url) in enumerate(pairs, start_from):
                 await queue.put((idx, qname, edit_url))
             lock = asyncio.Lock()
+            t_wall = time.time()
             await asyncio.gather(*[
-                _quiz_worker(context, queue, results, failed_timer, lock,
+                _quiz_worker(context, queue, results, failed_timer, snapshot, lock,
                              settings, dry_run, quiz_url, w)
                 for w in range(1, WORKER_COUNT + 1)
             ])
+            wall_time = time.time() - t_wall
 
             if failed_timer:
                 print(f"\n{'─' * 50}")
@@ -269,8 +295,15 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                     print(f"   • {q}")
 
             if results:
-                _print_run_summary(results, "quiz")
+                _print_run_summary(results, "quiz", wall_time)
 
+        if snapshot and not dry_run:
+            try:
+                with open(UNDO_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+                    json.dump(snapshot, f, indent=2)
+                print(f"  Undo snapshot: {len(snapshot)} quiz change(s) saved to undo_snapshot.json")
+            except Exception:
+                pass
         print(f"\n{'─' * 50}")
         print("✓  All done!")
         if rename_fn:
@@ -513,4 +546,62 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             await maybe_rename_staged(page, rename_fn)
         if review_fn:
             review_fn()
+        await context.close()
+
+
+async def run_undo(snapshot_path: str):
+    """Revert all quiz changes recorded in the undo snapshot."""
+    try:
+        with open(snapshot_path, encoding="utf-8") as f:
+            entries = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        print("✗ No undo snapshot found or file is invalid.")
+        return
+
+    if not entries:
+        print("✓ Snapshot is empty — nothing to undo.")
+        return
+
+    async with async_playwright() as p:
+        context = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            args=["--start-maximized"],
+            no_viewport=True,
+        )
+        page = await context.new_page()
+        await _wait_for_login(page, context)
+
+        print(f"\n{'─' * 50}")
+        print(f"Undoing {len(entries)} quiz change(s)...")
+
+        for i, entry in enumerate(entries, 1):
+            name              = entry.get("name", f"Quiz {i}")
+            edit_url          = entry.get("edit_url", "")
+            before_gradebook  = entry.get("before_gradebook")
+            before_timer      = entry.get("before_timer_value")
+
+            print(f"\n[{i}/{len(entries)}]  [{name}]")
+            if not edit_url:
+                print("    ⚠ no edit_url in snapshot — skipping")
+                continue
+            try:
+                await page.goto(edit_url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    await page.wait_for_selector(
+                        "button.d2l-grade-info, button.d2l-collapsible-panel-opener",
+                        timeout=15000,
+                    )
+                except Exception:
+                    pass
+                if before_gradebook is False:
+                    await revert_gradebook(page)
+                if before_timer is not None:
+                    await revert_auto_submit(page, before_timer)
+                await save_quiz(page, dry_run=False)
+            except Exception as e:
+                print(f"    ✗ {e}")
+
+        print(f"\n{'─' * 50}")
+        print("✓ Undo complete!")
         await context.close()
