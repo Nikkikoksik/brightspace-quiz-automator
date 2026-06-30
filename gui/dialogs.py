@@ -1,12 +1,19 @@
 import threading
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QHBoxLayout, QLabel,
     QMessageBox, QSpinBox, QVBoxLayout,
 )
 
 from gui.theme import T, _btn
+
+
+def _raise_to_front(w):
+    """Force a dialog above other windows (e.g. the Chrome automation window)."""
+    w.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    w.raise_()
+    w.activateWindow()
 
 
 class _ThreadBridge(QObject):
@@ -46,6 +53,7 @@ class _ThreadBridge(QObject):
         box.setWindowTitle("Confirmation" if is_yn else "Action Required")
         box.setText(msg)
         box.setStyleSheet(f"QMessageBox {{ background: {T['card_bg']}; }} QLabel {{ color: {T['text']}; }}")
+        _raise_to_front(box)
         if is_yn:
             box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             r = box.exec()
@@ -58,6 +66,7 @@ class _ThreadBridge(QObject):
 
     def _on_ask_range(self, total: int, label: str):
         dlg = _RangeDialog(total, label, self.parent())
+        _raise_to_front(dlg)
         if dlg.exec():
             self._result[0] = (dlg.start_val, dlg.end_val)
         else:
@@ -65,7 +74,12 @@ class _ThreadBridge(QObject):
         self._event.set()
 
     def _on_review(self, title: str, msg: str):
-        QMessageBox.information(self.parent(), title, msg)
+        box = QMessageBox(self.parent())
+        box.setWindowTitle(title)
+        box.setText(msg)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        _raise_to_front(box)
+        box.exec()
         self._event.set()
 
 

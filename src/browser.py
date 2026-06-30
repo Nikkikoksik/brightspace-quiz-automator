@@ -20,7 +20,7 @@ STATS_FILE         = str(_USERDATA_DIR / "timing_stats.json")
 UNDO_SNAPSHOT_FILE = str(_USERDATA_DIR / "undo_snapshot.json")
 _BS_PROFILE  = str(Path(__file__).parent.parent / "bs_profile")
 _OUTLINE_CFG = _USERDATA_DIR / "outline_config.json"
-WORKER_COUNT = 3
+WORKER_COUNT = 1
 
 
 def _load_bs_credentials():
@@ -244,7 +244,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             except Exception:
                 pass
             await page.wait_for_url("**/quizzing/**", timeout=60000)
-            await page.wait_for_load_state("networkidle")
+            await page.wait_for_load_state("domcontentloaded")
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")
@@ -268,10 +268,13 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             failed_timer = []
             results      = []
 
+            worker_count = max(1, min(3, int(settings.get("worker_count", 1))))
             pairs = await harvest_quiz_edit_urls(page, quiz_url)
             if pairs:
+                print(f"  Harvest: {len(pairs)} edit URLs — using {worker_count} worker(s)")
                 pairs = pairs[start_from - 1:end_at]
             else:
+                print(f"  Harvest: no direct URLs found — {worker_count} worker(s) will use action menu")
                 pairs = [(n, None) for n in names]
 
             queue: asyncio.Queue = asyncio.Queue()
@@ -282,7 +285,7 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             await asyncio.gather(*[
                 _quiz_worker(context, queue, results, failed_timer, snapshot, lock,
                              settings, dry_run, quiz_url, w)
-                for w in range(1, WORKER_COUNT + 1)
+                for w in range(1, worker_count + 1)
             ])
             wall_time = time.time() - t_wall
 
@@ -341,7 +344,7 @@ async def run_verify(urls: list[str]):
             except Exception:
                 pass
             await page.wait_for_url("**/quizzing/**", timeout=60000)
-            await page.wait_for_load_state("networkidle")
+            await page.wait_for_load_state("domcontentloaded")
 
             names = await get_quiz_names(page)
             if not names:
@@ -401,7 +404,7 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, limit: int 
             except Exception:
                 pass
             await page.wait_for_url("**/quizzing/**", timeout=60000)
-            await page.wait_for_load_state("networkidle")
+            await page.wait_for_load_state("domcontentloaded")
 
             if dry_run:
                 print("⚠  DRY RUN MODE — nothing will be saved")

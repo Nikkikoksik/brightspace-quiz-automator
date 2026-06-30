@@ -204,7 +204,7 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             [selector, text],
         )
 
-    async def _wait_coords(selector, text, timeout=10000, interval=200):
+    async def _wait_coords(selector, text, timeout=10000, interval=100):
         """Poll for an element by text; return coords as soon as it's visible, else None.
 
         Fast on quick loads (returns the moment it appears) and patient on slow
@@ -312,8 +312,8 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                 if await _dialog_open():
                     opened = True
                     break
-                await page.wait_for_timeout(200)
-                waited += 200
+                await page.wait_for_timeout(100)
+                waited += 100
             if opened:
                 break
             timer = await _coords_by_text("button", "Timer Settings") or timer
@@ -347,8 +347,8 @@ async def apply_auto_submit(page: Page, dry_run: bool):
                 if await _autosubmit_checked():
                     selected = True
                     break
-                await page.wait_for_timeout(150)
-                waited += 150
+                await page.wait_for_timeout(75)
+                waited += 75
             if selected:
                 break
             opt = await _coords_by_text("label", "Automatically submit") or opt
@@ -386,8 +386,8 @@ async def apply_auto_submit(page: Page, dry_run: bool):
             if summary_after and "submit" in summary_after.lower():
                 print("    Timer     : ✓ auto-submit set")
                 return True
-            await page.wait_for_timeout(250)
-            waited += 250
+            await page.wait_for_timeout(100)
+            waited += 100
         print(f"    Timer     : ✗ FAILED — summary still '{summary_after}'")
         return False
 
