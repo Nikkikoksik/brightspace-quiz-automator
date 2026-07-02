@@ -432,9 +432,8 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
         await loop.run_in_executor(None, _prompt, "Complete copy-components in the browser, then click OK to continue...")
         print("✓ Steps 1 + 2 complete")
 
-        # Navigate to course home so the browser looks active — prevents user from closing it
-        # while quiz/assignment automators run in their own separate windows.
-        print("  Navigating staging browser to course home — keep this window open until all steps complete.")
+        # Navigate to course home; chained automators now run as tabs in this same browser.
+        print("  Navigating to course home — keep this window open until all steps complete.")
         try:
             await page.goto(course_url, wait_until="domcontentloaded")
         except Exception:
@@ -458,7 +457,7 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
             settings = {"set_in_gradebook": True, "set_auto_submit": True}
             await run_quiz([course_url], dry_run=dry_run, settings=settings,
                            review_fn=lambda: _review_fn("Quiz Automator"),
-                           history_fn=_kind_fn("quiz"))
+                           history_fn=_kind_fn("quiz"), context=context)
 
             answer = await loop.run_in_executor(None, _prompt, "Continue with Assignment Automator? (y/n): ")
             if answer.strip().lower() in ("y", "yes"):
@@ -467,7 +466,7 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
                 settings = {"set_in_gradebook": True}
                 await run_assignments([course_url], dry_run=dry_run, settings=settings,
                                       review_fn=lambda: _review_fn("Assignment Automator"),
-                                      history_fn=_kind_fn("assignment"))
+                                      history_fn=_kind_fn("assignment"), context=context)
 
                 answer = await loop.run_in_executor(None, _prompt, "Continue with Course Outline? (y/n): ")
                 if answer.strip().lower() in ("y", "yes"):

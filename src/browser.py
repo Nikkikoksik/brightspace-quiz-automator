@@ -208,27 +208,9 @@ async def run_bs_login():
         await context.close()
 
 
-async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None, history_fn=None):
-    snapshot: list = []
-    if not dry_run:
-        try:
-            with open(UNDO_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
-                json.dump([], f)
-        except Exception:
-            pass
-    async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
-            _BS_PROFILE,
-            headless=False,
-
-            args=["--start-maximized"],
-            no_viewport=True,
-        )
-        page = await context.new_page()
-
-        await _wait_for_login(page, context)
-
-        for raw_url in urls:
+async def _quiz_flow(context, page, urls, dry_run, settings, limit, ask_fn, review_fn, rename_fn, history_fn, snapshot):
+    """Course loop for run() — context/page provided by the caller."""
+    for raw_url in urls:
             print(f"\n{'─' * 50}")
             print(f"Course: {raw_url}")
 
@@ -305,21 +287,57 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
             if results:
                 _print_run_summary(results, "quiz", wall_time)
 
-        if snapshot and not dry_run:
+    if snapshot and not dry_run:
+        try:
+            with open(UNDO_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2)
+            print(f"  Undo snapshot: {len(snapshot)} quiz change(s) saved to undo_snapshot.json")
+        except Exception:
+            pass
+    print(f"\n{'─' * 50}")
+    print("✓  All done!")
+    if rename_fn:
+        from staging_automator import maybe_rename_staged
+        await maybe_rename_staged(page, rename_fn)
+    if review_fn:
+        review_fn()
+
+
+async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None, history_fn=None, context=None):
+    snapshot: list = []
+    if not dry_run:
+        try:
+            with open(UNDO_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+                json.dump([], f)
+        except Exception:
+            pass
+
+    if context is not None:
+        # Shared browser (e.g. chained from Staging) — already logged in;
+        # open our own page and leave the context alive for the caller.
+        page = await context.new_page()
+        try:
+            await _quiz_flow(context, page, urls, dry_run, settings, limit,
+                             ask_fn, review_fn, rename_fn, history_fn, snapshot)
+        finally:
             try:
-                with open(UNDO_SNAPSHOT_FILE, "w", encoding="utf-8") as f:
-                    json.dump(snapshot, f, indent=2)
-                print(f"  Undo snapshot: {len(snapshot)} quiz change(s) saved to undo_snapshot.json")
+                await page.close()
             except Exception:
                 pass
-        print(f"\n{'─' * 50}")
-        print("✓  All done!")
-        if rename_fn:
-            from staging_automator import maybe_rename_staged
-            await maybe_rename_staged(page, rename_fn)
-        if review_fn:
-            review_fn()
-        await context.close()
+        return
+
+    async with async_playwright() as p:
+        own_ctx = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            args=["--start-maximized"],
+            no_viewport=True,
+        )
+        page = await own_ctx.new_page()
+        await _wait_for_login(page, own_ctx)
+        await _quiz_flow(own_ctx, page, urls, dry_run, settings, limit,
+                         ask_fn, review_fn, rename_fn, history_fn, snapshot)
+        await own_ctx.close()
 
 
 async def run_verify(urls: list[str]):
@@ -466,20 +484,9 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, limit: int 
         await context.close()
 
 
-async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None, history_fn=None):
-    async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
-            _BS_PROFILE,
-            headless=False,
-
-            args=["--start-maximized"],
-            no_viewport=True,
-        )
-        page = await context.new_page()
-
-        await _wait_for_login(page, context)
-
-        for raw_url in urls:
+async def _assignment_flow(context, page, urls, dry_run, settings, limit, ask_fn, review_fn, rename_fn, history_fn):
+    """Course loop for run_assignments() — context/page provided by the caller."""
+    for raw_url in urls:
             print(f"\n{'─' * 50}")
             print(f"Course: {raw_url}")
 
@@ -553,14 +560,42 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
             if results:
                 _print_run_summary(results, "assignment")
 
-        print(f"\n{'─' * 50}")
-        print("✓  All done!")
-        if rename_fn:
-            from staging_automator import maybe_rename_staged
-            await maybe_rename_staged(page, rename_fn)
-        if review_fn:
-            review_fn()
-        await context.close()
+    print(f"\n{'─' * 50}")
+    print("✓  All done!")
+    if rename_fn:
+        from staging_automator import maybe_rename_staged
+        await maybe_rename_staged(page, rename_fn)
+    if review_fn:
+        review_fn()
+
+
+async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None, history_fn=None, context=None):
+    if context is not None:
+        # Shared browser (e.g. chained from Staging) — already logged in;
+        # open our own page and leave the context alive for the caller.
+        page = await context.new_page()
+        try:
+            await _assignment_flow(context, page, urls, dry_run, settings, limit,
+                                   ask_fn, review_fn, rename_fn, history_fn)
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+        return
+
+    async with async_playwright() as p:
+        own_ctx = await p.chromium.launch_persistent_context(
+            _BS_PROFILE,
+            headless=False,
+            args=["--start-maximized"],
+            no_viewport=True,
+        )
+        page = await own_ctx.new_page()
+        await _wait_for_login(page, own_ctx)
+        await _assignment_flow(own_ctx, page, urls, dry_run, settings, limit,
+                               ask_fn, review_fn, rename_fn, history_fn)
+        await own_ctx.close()
 
 
 async def run_undo(snapshot_path: str):

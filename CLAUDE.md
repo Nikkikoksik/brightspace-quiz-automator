@@ -145,6 +145,20 @@ File does not exist as of 2026-06-02. Spec is in `COURSE_OUTLINE_AUTOMATOR_SPEC.
 
 `gui_pyqt6.py` is the sole GUI, replacing the old CustomTkinter `gui.py` (deleted — an archived copy remains at `archive/gui_customtkinter_legacy.py` for reference only, not imported anywhere).
 
+## Work in progress / next steps (as of 2026-07-02, synced from work machine)
+- **DONE + tested:** seamless chained flow (Staging → Quizzes → Assignments → Course Outline
+  all reuse one browser via `context=` param on `browser.run()` / `run_assignments()` /
+  outline `run()`); new-tab outline download with auto-click + red-highlight manual fallback;
+  History tab logs every phase of chained runs with clickable course URLs.
+- **NEXT ("Plan B2"):** GUI tab auto-switching during chained runs — backend `phase_fn`
+  callback at each phase transition in `run_steps_1_2`; GUI flips to the matching panel
+  (`_show_panel`) and routes log output there (log-writer tag must become switchable,
+  special message via `_log_queue` handled in `_poll_log`). Not started.
+- **THEN:** Gradebook automation — approved spec at
+  `docs/superpowers/specs/2026-07-02-gradebook-automation-design.md`. Next step is an
+  implementation plan. The two Brightspace-DOM functions (`fetch_gradebook_items`,
+  `apply_categories`) get built via a live walkthrough with the user, not guessed.
+
 ## Current state (as of 2026-07-02)
 - 8 tabs: Staging, Quizzes, Assignments, Course Outline, Timer Fix, Content Cleaner, History, Settings (Notes and Queue tabs were removed; History is being redesigned — see below)
 - Slate theme applied: bg `#0d1117`, sidebar `#010409`, accent `#0ea5e9`
