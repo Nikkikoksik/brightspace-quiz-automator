@@ -7,11 +7,11 @@ import threading
 from urllib.parse import urlparse
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QCheckBox, QLineEdit, QPushButton, QWidget
+from PyQt6.QtWidgets import QLineEdit, QPushButton, QWidget
 
 from gui.constants import SESSION_FILE_GUI
 from gui.telemetry import _sentry_capture, _sentry_context
-from gui.theme import T, _btn, _checkbox_style, _entry_style
+from gui.theme import T, _btn, _entry_style
 
 
 class StagingPanelMixin:
@@ -30,11 +30,6 @@ class StagingPanelMixin:
         self._staging_crn.editingFinished.connect(self._auto_extract_crn)
         layout.addWidget(self._staging_crn)
         layout.addSpacing(16)
-
-        self._staging_dryrun = QCheckBox("Dry run  (navigate only, no changes)")
-        self._staging_dryrun.setStyleSheet(_checkbox_style(warn=True))
-        layout.addWidget(self._staging_dryrun)
-        layout.addSpacing(20)
 
         self._staging_steps12_btn = QPushButton("▶   Stage Course")
         self._staging_steps12_btn.setFixedHeight(52)
@@ -121,7 +116,6 @@ class StagingPanelMixin:
         self._staging_steps12_btn.setEnabled(False)
         self._staging_steps12_btn.setText("Running…")
         self._staging_log.clear()
-        dry_run = self._staging_dryrun.isChecked()
         q       = self._log_queue
         bridge  = self._bridge
 
@@ -137,9 +131,9 @@ class StagingPanelMixin:
             try:
                 _sentry_context("staging", crn)
                 asyncio.run(run_steps_1_2(
-                    crn, dry_run=dry_run,
+                    crn, dry_run=False,
                     prompt_fn=bridge.prompt,
-                    note_fn=lambda t: q.put(("note", t)),
+                    history_fn=lambda name, url, kind: self._append_history([(name, url)], kind),
                 ))
             except Exception as e:
                 _sentry_capture(e)

@@ -1,17 +1,15 @@
 import asyncio
 import sys
 import threading
-from pathlib import Path
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPushButton, QSpinBox, QWidget,
 )
 
-from gui.constants import UNDO_SNAPSHOT_FILE
 from gui.telemetry import _sentry_capture, _sentry_context
-from gui.theme import T, _btn, _checkbox_style, _entry_style
+from gui.theme import T, _btn, _entry_style
 
 
 class QuizPanelMixin:
@@ -35,20 +33,9 @@ class QuizPanelMixin:
         layout.addWidget(add_btn)
         layout.addSpacing(16)
 
-        self._section_label(layout, "SETTINGS")
-        self._gradebook_var  = QCheckBox("Add to Grade Book")
-        self._gradebook_var.setChecked(True)
-        self._gradebook_var.setStyleSheet(_checkbox_style())
-        self._autosubmit_var = QCheckBox("Auto-submit on timer expiry")
-        self._autosubmit_var.setChecked(True)
-        self._autosubmit_var.setStyleSheet(_checkbox_style())
-        self._quiz_dryrun    = QCheckBox("Dry run  (preview only — nothing will be saved)")
-        self._quiz_dryrun.setStyleSheet(_checkbox_style(warn=True))
-        for cb in [self._gradebook_var, self._autosubmit_var, self._quiz_dryrun]:
-            layout.addWidget(cb)
-        layout.addSpacing(12)
-
-        worker_row = QHBoxLayout()
+        worker_widget = QWidget()
+        worker_row = QHBoxLayout(worker_widget)
+        worker_row.setContentsMargins(12, 6, 12, 6)
         worker_lbl = QLabel("Parallel browser tabs")
         worker_lbl.setStyleSheet(f"color: {T['text']};")
         worker_row.addWidget(worker_lbl)
@@ -56,17 +43,19 @@ class QuizPanelMixin:
         self._worker_spin.setRange(1, 3)
         self._worker_spin.setValue(1)
         self._worker_spin.setFixedWidth(60)
+        self._worker_spin.setToolTip("1 is most reliable; higher is faster but flakier")
         self._worker_spin.setStyleSheet(
             f"background: {T['bg']}; color: {T['text']}; "
             f"border: 1px solid {T['card_border']}; border-radius: 4px; padding: 2px 6px;"
         )
         worker_row.addWidget(self._worker_spin)
-        worker_hint = QLabel("(1 is most reliable; higher is faster but flakier)")
-        worker_hint.setStyleSheet(f"color: {T['text_muted']};")
-        worker_row.addWidget(worker_hint)
-        worker_row.addStretch()
-        layout.addLayout(worker_row)
-        layout.addSpacing(20)
+
+        gear_btn, gear = self._gear_button([
+            ("Add to Grade Book", True),
+            ("Auto-submit on timer expiry", True),
+        ], extra_widget=worker_widget)
+        self._gradebook_var  = gear["Add to Grade Book"]
+        self._autosubmit_var = gear["Auto-submit on timer expiry"]
 
         self._quiz_run_btn = QPushButton("▶  Run Quizzes")
         self._quiz_run_btn.setFixedHeight(52)
@@ -74,22 +63,11 @@ class QuizPanelMixin:
             _btn(T["btn_primary"], T["btn_primary_h"]) + "QPushButton { font-size: 16px; }"
         )
         self._quiz_run_btn.clicked.connect(self._start_quiz_run)
-        layout.addWidget(self._quiz_run_btn)
-        layout.addSpacing(6)
-
-        self._quiz_verify_btn = QPushButton("🔍   VERIFY SETTINGS  (read-only check, no changes)")
-        self._quiz_verify_btn.setFixedHeight(38)
-        self._quiz_verify_btn.setStyleSheet(_btn("#1a2e1a", "#2a4a2a"))
-        self._quiz_verify_btn.clicked.connect(self._start_quiz_verify)
-        layout.addWidget(self._quiz_verify_btn)
-        layout.addSpacing(6)
-
-        self._quiz_undo_btn = QPushButton("↩  Undo Last Run")
-        self._quiz_undo_btn.setFixedHeight(38)
-        self._quiz_undo_btn.setStyleSheet(_btn("#2e1a1a", "#4a2a2a"))
-        self._quiz_undo_btn.clicked.connect(self._start_quiz_undo)
-        self._quiz_undo_btn.setEnabled(Path(UNDO_SNAPSHOT_FILE).exists())
-        layout.addWidget(self._quiz_undo_btn)
+        run_row = QHBoxLayout()
+        run_row.setSpacing(8)
+        run_row.addWidget(self._quiz_run_btn, stretch=1)
+        run_row.addWidget(gear_btn)
+        layout.addLayout(run_row)
         layout.addSpacing(12)
 
         self._section_label(layout, "LOG")
@@ -105,8 +83,6 @@ class QuizPanelMixin:
         self._last_quiz_urls = urls
         self._quiz_run_btn.setEnabled(False)
         self._quiz_run_btn.setText("Running…")
-        self._quiz_verify_btn.setEnabled(False)
-        self._quiz_undo_btn.setEnabled(False)
         self._resume_event.set()
         self._quiz_log.clear()
         settings = {
@@ -114,7 +90,6 @@ class QuizPanelMixin:
             "set_auto_submit":  self._autosubmit_var.isChecked(),
             "worker_count":     self._worker_spin.value(),
         }
-        dry_run = self._quiz_dryrun.isChecked()
         ask_fn  = self._make_ask_fn()
         q       = self._log_queue
         bridge  = self._bridge
@@ -137,47 +112,17 @@ class QuizPanelMixin:
                 _sentry_context("quizzes", urls[0] if urls else "")
                 from browser import run as browser_run
                 asyncio.run(browser_run(
-                    urls=urls, dry_run=dry_run,
+                    urls=urls, dry_run=False,
                     settings=settings, ask_fn=ask_fn, review_fn=review_fn,
+                    history_fn=lambda name, url: self._append_history([(name, url)], "quiz"),
                 ))
                 success = True
-                self._append_history(urls, "quiz")
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("quiz", f"✗  {e}"))
             finally:
                 sys.stdout = old
                 q.put(("quiz", "__QUIZ_DONE__" if success else "__DONE__"))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _start_quiz_verify(self):
-        urls = [e.text().strip() for _, e in self._url_rows if e.text().strip()]
-        if not urls:
-            self._log_append(self._quiz_log, "⚠  No course URLs entered.")
-            return
-        self._quiz_verify_btn.setEnabled(False)
-        self._quiz_verify_btn.setText("Verifying…")
-        self._quiz_log.clear()
-        q = self._log_queue
-
-        def worker():
-            from browser import run_verify
-
-            class W:
-                def write(self, t):
-                    if t.strip(): q.put(("quiz", t.rstrip()))
-                def flush(self): pass
-
-            old, sys.stdout = sys.stdout, W()
-            try:
-                asyncio.run(run_verify(urls))
-            except Exception as e:
-                _sentry_capture(e)
-                q.put(("quiz", f"✗  {e}"))
-            finally:
-                sys.stdout = old
-                q.put(("quiz", "__DONE__"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -188,7 +133,6 @@ class QuizPanelMixin:
         self._last_quiz_urls = urls
         self._quiz_run_btn.setEnabled(False)
         self._quiz_run_btn.setText("Running…")
-        self._quiz_verify_btn.setEnabled(False)
         self._resume_event.set()
         self._quiz_log.clear()
         settings = {
@@ -196,7 +140,6 @@ class QuizPanelMixin:
             "set_auto_submit":  self._autosubmit_var.isChecked(),
             "worker_count":     self._worker_spin.value(),
         }
-        dry_run = self._quiz_dryrun.isChecked()
         ask_fn  = self._make_ask_fn()
         q       = self._log_queue
         bridge  = self._bridge
@@ -218,8 +161,9 @@ class QuizPanelMixin:
                 _sentry_context("quizzes", urls[0] if urls else "")
                 from browser import run as browser_run
                 asyncio.run(browser_run(
-                    urls=urls, dry_run=dry_run,
+                    urls=urls, dry_run=False,
                     settings=settings, ask_fn=ask_fn, review_fn=review_fn,
+                    history_fn=lambda name, url: self._append_history([(name, url)], "quiz"),
                 ))
             except Exception as e:
                 _sentry_capture(e)
@@ -239,30 +183,3 @@ class QuizPanelMixin:
         )
         if r == QMessageBox.StandardButton.Yes:
             self._run_assignments_for(self._last_quiz_urls)
-
-    def _start_quiz_undo(self):
-        self._quiz_undo_btn.setEnabled(False)
-        self._quiz_undo_btn.setText("Undoing…")
-        self._quiz_run_btn.setEnabled(False)
-        self._quiz_verify_btn.setEnabled(False)
-        self._quiz_log.clear()
-        q = self._log_queue
-
-        def worker():
-            class W:
-                def write(self, t):
-                    if t.strip(): q.put(("quiz", t.rstrip()))
-                def flush(self): pass
-
-            old, sys.stdout = sys.stdout, W()
-            try:
-                from browser import run_undo
-                asyncio.run(run_undo(UNDO_SNAPSHOT_FILE))
-            except Exception as e:
-                _sentry_capture(e)
-                q.put(("quiz", f"✗  {e}"))
-            finally:
-                sys.stdout = old
-                q.put(("quiz", "__UNDO_DONE__"))
-
-        threading.Thread(target=worker, daemon=True).start()

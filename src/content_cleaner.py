@@ -14,7 +14,7 @@ from course_outline_automator import (
     _resolve_course_id,
     _open_topic_edit_page,
     _set_tinymce_content,
-    _save_two_pass,
+    _click_save_and_close,
 )
 
 if os.name == "nt":
@@ -23,6 +23,7 @@ else:
     _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
 
 from browser import _BS_PROFILE, _load_bs_credentials, _wait_for_login
+from navigation import get_course_name
 
 SKIP_MODULES = {
     "How to Use This Blueprint",
@@ -511,7 +512,9 @@ async def process_topic(
         await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
         print("    ✓ Saved")
     else:
-        await _save_two_pass(edit_page)
+        if await _click_save_and_close(edit_page):
+            await edit_page.wait_for_load_state("domcontentloaded", timeout=15000)
+            print("    ✓ Saved")
     return changes, warnings
 
 
@@ -568,7 +571,7 @@ async def pre_scan_topics(page: Page, topics: list[dict]) -> list[dict]:
     return [t for t in topics if t["TopicId"] in keep_ids]
 
 
-async def scan_course(course_url: str, dry_run: bool = False) -> None:
+async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -> None:
     """Main entry point: scan all HTML topics in a course and replace Moodle references."""
     if dry_run:
         print("⚠  DRY RUN — no changes will be saved\n")
@@ -591,6 +594,15 @@ async def scan_course(course_url: str, dry_run: bool = False) -> None:
         await page.goto(f"{BRIGHTSPACE_BASE}/d2l/home/{course_id}")
         await page.wait_for_load_state("domcontentloaded")
         await page.wait_for_timeout(2000)
+
+        if history_fn:
+            try:
+                history_fn(
+                    await get_course_name(page) or await page.title(),
+                    f"{BRIGHTSPACE_BASE}/d2l/home/{course_id}",
+                )
+            except Exception:
+                pass
 
         nav_href = await page.evaluate("""
             () => {

@@ -35,6 +35,22 @@ def resolve_assignment_url(url: str) -> str:
     return f"{BS_BASE}/d2l/lms/dropbox/user/folders_list.d2l?ou={ou}"
 
 
+async def get_course_name(page: Page) -> str | None:
+    """Read the course code/name (e.g. 'ENGL-225-001-11720.202610_Staged') from the
+    Brightspace nav header. Returns None if not found (e.g. wrong page, not logged in)."""
+    try:
+        return await page.evaluate("""
+            () => {
+                const el = document.querySelector('.d2l-navigation-s-title-container a.d2l-navigation-s-link');
+                if (!el) return null;
+                const text = (el.getAttribute('title') || el.textContent || '').trim();
+                return text || null;
+            }
+        """)
+    except Exception:
+        return None
+
+
 async def discover_course_urls(page: Page, course_url: str) -> dict:
     """Navigate to a course page and extract quiz/assignment URLs from the nav shadow DOM."""
     try:

@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200, harvest_quiz_edit_urls
+from navigation import get_quiz_names, open_quiz_edit, get_assignment_names, open_assignment_edit, discover_course_urls, set_per_page_200, harvest_quiz_edit_urls, get_course_name
 from actions import apply_gradebook, apply_auto_submit, save_quiz, apply_assignment_gradebook, save_assignment, verify_quiz_settings, _read_timing_summary, apply_pdf_only_file_type, apply_rename_title, read_quiz_before_state, revert_gradebook, revert_auto_submit
 
 if os.name == "nt":
@@ -208,7 +208,7 @@ async def run_bs_login():
         await context.close()
 
 
-async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None):
+async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None, history_fn=None):
     snapshot: list = []
     if not dry_run:
         try:
@@ -239,6 +239,12 @@ async def run(urls: list[str], dry_run: bool, settings: dict, limit: int | None 
                 print("✗ Could not find Quizzes link on this course page.")
                 continue
             print(f"  Quiz list: {quiz_url}")
+
+            if history_fn:
+                try:
+                    history_fn(await get_course_name(page) or await page.title(), raw_url)
+                except Exception:
+                    pass
 
             try:
                 await page.goto(quiz_url, wait_until="commit")
@@ -460,7 +466,7 @@ async def run_timer_fix(urls: list[str], dry_run: bool, ask_fn=None, limit: int 
         await context.close()
 
 
-async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None):
+async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit: int | None = None, ask_fn=None, review_fn=None, rename_fn=None, history_fn=None):
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
@@ -484,6 +490,12 @@ async def run_assignments(urls: list[str], dry_run: bool, settings: dict, limit:
                 print("✗ Could not find Assignments link on this course page.")
                 continue
             print(f"  Assignment list: {asgn_url}")
+
+            if history_fn:
+                try:
+                    history_fn(await get_course_name(page) or await page.title(), raw_url)
+                except Exception:
+                    pass
 
             try:
                 await page.goto(asgn_url, wait_until="commit")

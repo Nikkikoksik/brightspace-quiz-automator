@@ -21,6 +21,7 @@ T = {
     "btn_muted_h":  "#30363d",
     "btn_danger":   "#6e1a1a",
     "btn_danger_h": "#922222",
+    "danger_text":  "#f85149",
     "btn_add":      "#14532d",
     "btn_add_h":    "#166534",
     "warn":         "#f59e0b",
@@ -40,7 +41,7 @@ def _dark_palette() -> QPalette:
     p.setColor(QPalette.ColorRole.ButtonText,      QColor(T["text"]))
     p.setColor(QPalette.ColorRole.Highlight,       QColor(T["accent"]))
     p.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-    p.setColor(QPalette.ColorRole.PlaceholderText, QColor(T["text_dim"]))
+    p.setColor(QPalette.ColorRole.PlaceholderText, QColor(T["text_muted"]))
     p.setColor(QPalette.ColorRole.Mid,             QColor(T["card_border"]))
     return p
 
@@ -90,7 +91,7 @@ def _checkbox_style(warn: bool = False) -> str:
 def _log_style() -> str:
     return f"""
         QTextEdit {{
-            background: {T["terminal_bg"]}; color: {T["text_muted"]};
+            background: {T["terminal_bg"]}; color: {T["text"]};
             border: none; border-left: 2px solid {T["accent_dim"]}; border-radius: 0px;
             font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
             font-size: 12px; padding: 10px 14px;

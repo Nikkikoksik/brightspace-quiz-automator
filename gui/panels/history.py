@@ -1,13 +1,15 @@
 import json
+import webbrowser
 from datetime import datetime
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from gui.constants import COURSE_HISTORY_FILE
-from gui.theme import T, _entry_style, _scroll_style
+from gui.theme import T, _btn, _entry_style, _scroll_style
 
 
 class HistoryPanelMixin:
@@ -16,14 +18,23 @@ class HistoryPanelMixin:
         layout = QVBoxLayout(parent)
         layout.setContentsMargins(32, 28, 32, 28)
         layout.setSpacing(0)
-        self._panel_header(layout, "History", "Completed quiz and assignment runs")
+        self._panel_header(layout, "History", "Courses you've worked on")
 
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
         self._history_search = QLineEdit()
-        self._history_search.setPlaceholderText("Search by URL…")
+        self._history_search.setPlaceholderText("Search by course name, CRN, or code…")
         self._history_search.setFixedHeight(32)
         self._history_search.setStyleSheet(_entry_style())
         self._history_search.textChanged.connect(lambda: self._load_history_tab())
-        layout.addWidget(self._history_search)
+        top_row.addWidget(self._history_search, stretch=1)
+
+        clear_btn = QPushButton("Clear History")
+        clear_btn.setFixedHeight(32)
+        clear_btn.setStyleSheet(_btn(T["btn_danger"], T["btn_danger_h"]))
+        clear_btn.clicked.connect(self._clear_history)
+        top_row.addWidget(clear_btn)
+        layout.addLayout(top_row)
         layout.addSpacing(10)
 
         self._history_scroll = QScrollArea()
@@ -31,7 +42,6 @@ class HistoryPanelMixin:
         self._history_scroll.setStyleSheet(_scroll_style())
         self._history_inner  = QWidget()
         self._history_layout = QVBoxLayout(self._history_inner)
-        from PyQt6.QtCore import Qt
         self._history_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._history_scroll.setWidget(self._history_inner)
         layout.addWidget(self._history_scroll, stretch=1)
@@ -53,39 +63,96 @@ class HistoryPanelMixin:
         except (FileNotFoundError, json.JSONDecodeError):
             entries = []
         filtered = [
-            e for e in reversed(entries)
-            if not term or term in e.get("url", "").lower()
+            e for e in entries
+            if not term or term in e.get("name", "").lower()
         ]
         if not filtered:
             lbl = QLabel("No history yet." if not term else "No matches.")
-            lbl.setStyleSheet(f"color: {T['text_dim']}; font-size: 12px; padding: 10px;")
+            lbl.setStyleSheet(f"color: {T['text_muted']}; font-size: 12px; padding: 10px;")
             self._history_layout.addWidget(lbl)
             return
-        for entry in filtered:
-            url   = entry.get("url", "")
-            kind  = entry.get("type", "quiz")
-            ts    = entry.get("timestamp", "")[:16].replace("T", " ")
-            icon  = "[Q]" if kind == "quiz" else "[A]"
-            short = url[-72:] if len(url) > 72 else url
-            row   = QFrame()
-            row.setStyleSheet(
+        kind_labels = {
+            "staging":    "Staged",
+            "quiz":       "Quizzes",
+            "assignment": "Assignments",
+            "outline":    "Course Outline",
+            "cleaner":    "Content Cleaned",
+        }
+
+        groups: dict[str, list] = {}
+        for e in filtered:
+            groups.setdefault(e.get("name", ""), []).append(e)
+        ordered_names = sorted(
+            groups.keys(),
+            key=lambda n: max(e.get("timestamp", "") for e in groups[n]),
+            reverse=True,
+        )
+
+        for name in ordered_names:
+            acts = sorted(groups[name], key=lambda e: e.get("timestamp", ""), reverse=True)
+            url  = next((e.get("url") for e in acts if e.get("url")), None)
+            card = QFrame()
+            card.setStyleSheet(
                 f"QFrame {{ background: {T['card_bg']}; "
                 f"border: 1px solid {T['card_border']}; border-radius: 6px; }}"
             )
-            row_l = QHBoxLayout(row)
-            row_l.setContentsMargins(8, 5, 8, 5)
-            txt = QLabel(f"{icon}  {short}")
-            txt.setStyleSheet(
-                f"color: {T['text_muted']}; font-family: 'Consolas', monospace; "
-                f"font-size: 11px; border: none;"
-            )
-            row_l.addWidget(txt, stretch=1)
-            ts_lbl = QLabel(ts)
-            ts_lbl.setStyleSheet(f"color: {T['text_dim']}; font-size: 10px; border: none;")
-            row_l.addWidget(ts_lbl)
-            self._history_layout.addWidget(row)
+            card_l = QVBoxLayout(card)
+            card_l.setContentsMargins(10, 8, 10, 8)
+            card_l.setSpacing(4)
 
-    def _append_history(self, urls: list, kind: str):
+            if url:
+                title = QPushButton(f"🔗  {name}")
+                title.setCursor(Qt.CursorShape.PointingHandCursor)
+                title.setToolTip("Click to open this course in your browser")
+                title.setStyleSheet(
+                    "QPushButton { background: transparent; color: #ffffff; "
+                    "font-family: 'Consolas', monospace; font-size: 14px; font-weight: 600; "
+                    "border: none; text-align: left; padding: 0; }"
+                    f"QPushButton:hover {{ color: {T['accent']}; }}"
+                )
+                title.clicked.connect(lambda _, u=url: webbrowser.open(u))
+            else:
+                title = QLabel(name)
+                title.setStyleSheet(
+                    "color: #ffffff; font-family: 'Consolas', monospace; "
+                    "font-size: 14px; font-weight: 600; border: none;"
+                )
+            card_l.addWidget(title)
+
+            for e in acts:
+                kind  = e.get("type", "quiz")
+                label = kind_labels.get(kind, kind)
+                ts    = e.get("timestamp", "")[:16].replace("T", " ")
+                act_row = QHBoxLayout()
+                act_row.setContentsMargins(0, 0, 0, 0)
+                act_lbl = QLabel(label)
+                act_lbl.setStyleSheet(f"color: {T['text_muted']}; font-size: 12px; border: none;")
+                act_row.addWidget(act_lbl, stretch=1)
+                ts_lbl = QLabel(ts)
+                ts_lbl.setStyleSheet(f"color: {T['text_muted']}; font-size: 11px; border: none;")
+                act_row.addWidget(ts_lbl)
+                card_l.addLayout(act_row)
+
+            self._history_layout.addWidget(card)
+
+    def _clear_history(self):
+        r = QMessageBox.question(
+            self,
+            "Clear History?",
+            "This will permanently delete all history entries. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if r != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            with open(COURSE_HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump([], f)
+        except Exception:
+            pass
+        self._load_history_tab()
+
+    def _append_history(self, items: list, kind: str):
+        """items: list of (name, url) tuples."""
         try:
             try:
                 with open(COURSE_HISTORY_FILE, encoding="utf-8") as f:
@@ -93,8 +160,12 @@ class HistoryPanelMixin:
             except (FileNotFoundError, json.JSONDecodeError):
                 entries = []
             ts = datetime.now().isoformat(timespec="seconds")
-            for url in urls:
-                entries.append({"url": url, "type": kind, "timestamp": ts})
+            for name, url in items:
+                entries = [
+                    e for e in entries
+                    if not (e.get("name") == name and e.get("type") == kind)
+                ]
+                entries.append({"name": name, "url": url, "type": kind, "timestamp": ts})
             with open(COURSE_HISTORY_FILE, "w", encoding="utf-8") as f:
                 json.dump(entries, f, indent=2)
         except Exception:

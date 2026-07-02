@@ -1,7 +1,7 @@
 ﻿import os
 from pathlib import Path
 
-VERSION      = "v0.8.5"
+VERSION      = "v0.8.6"
 _ROOT        = Path(__file__).parent.parent
 ICON_PATH    = str(_ROOT / "installer" / "assets" / "icon.ico")
 USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
@@ -17,9 +17,6 @@ CHECK_SVG_PATH = str(_CHECK_SVG).replace("\\", "/")
 
 COURSES_FILE        = str(USERDATA_DIR / "courses.txt")
 OUTLINE_CFG         = str(USERDATA_DIR / "outline_config.json")
-NOTES_FILE          = str(USERDATA_DIR / "notes.txt")
-STAGING_DONE_FILE   = str(USERDATA_DIR / "staging_done.json")
-STAGING_QUEUE_FILE  = str(USERDATA_DIR / "staging_queue.txt")
 SESSION_FILE_GUI    = str(USERDATA_DIR / "session.json")
 COURSE_HISTORY_FILE  = str(USERDATA_DIR / "course_history.json")
 UNDO_SNAPSHOT_FILE   = str(USERDATA_DIR / "undo_snapshot.json")

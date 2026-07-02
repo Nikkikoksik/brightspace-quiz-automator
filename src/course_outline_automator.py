@@ -189,72 +189,116 @@ async def _fetch_matching_topics(page: Page, course_id: str) -> list[tuple[str, 
     return matches
 
 
-async def _try_download_candidate(page: Page, title: str, url: str, download_dir: Path, prompt_fn) -> "Path | None":
-    """Confirm by title, then download. Returns path or None if skipped."""
-    answer = prompt_fn(f'Found: "{title}"\n\nIs this the correct course outline? (y/n)').strip().lower()
-    if answer != "y":
-        print(f"  Skipping '{title}'...")
-        return None
+# Finds the first visible element labelled "download" (walking shadow DOM and
+# iframes), highlights it red so the user can spot it, and returns its center
+# coordinates for clicking.
+_FIND_DL_BTN_JS = """
+    () => {
+        function walk(root) {
+            for (const el of root.querySelectorAll('button, a, [role="button"]')) {
+                const label = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').toLowerCase().trim();
+                if (label.includes('download')) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        el.style.outline = '3px solid #f85149';
+                        el.style.outlineOffset = '2px';
+                        return { x: r.left + r.width/2, y: r.top + r.height/2, label };
+                    }
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
+                if (el.tagName === 'IFRAME') {
+                    try { const ir = el.getBoundingClientRect(); const c = walk(el.contentDocument); if (c) return { x: c.x + ir.left, y: c.y + ir.top, label: c.label }; } catch(e) {}
+                }
+            }
+            return null;
+        }
+        return walk(document);
+    }
+"""
 
-    print(f"  Downloading: {title}...")
+
+async def _save_download(download, download_dir: Path) -> Path:
+    raw_dest = download_dir / download.suggested_filename
+    await download.save_as(raw_dest)
+    dest = ensure_extension(raw_dest)
+    print(f"  ✓ Downloaded: {dest.name}")
+    return dest
+
+
+async def _try_download_candidate(page: Page, title: str, url: str, download_dir: Path, prompt_fn) -> "Path | None":
+    """Open the candidate in a new tab so the user can see it, confirm, then
+    auto-click Download — falling back to a highlighted manual click."""
+    print(f"  Opening '{title}' in a new tab...")
+    tab = await page.context.new_page()
     direct_download = False
     try:
-        await page.goto(url)
-        await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(2000)
+        await tab.goto(url)
+        await tab.wait_for_load_state("domcontentloaded")
+        await tab.wait_for_timeout(2000)
     except Exception as e:
         if "download is starting" in str(e).lower():
             direct_download = True
         else:
+            await tab.close()
             raise
 
     if direct_download:
-        async with page.expect_download(timeout=30000) as dl_info:
+        # Link points straight at a file — nothing to preview, confirm by name
+        answer = prompt_fn(
+            f'"{title}" is a direct file link (no preview possible).\n\n'
+            "Is this the course outline? (y/n)"
+        ).strip().lower()
+        if answer not in ("y", "yes"):
+            await tab.close()
+            print(f"  Skipping '{title}'...")
+            return None
+        async with tab.expect_download(timeout=30000) as dl_info:
             try:
-                await page.goto(url)
+                await tab.goto(url)
             except Exception as e:
                 if "download is starting" not in str(e).lower():
                     raise
-        download = await dl_info.value
-        raw_dest = download_dir / download.suggested_filename
-        await download.save_as(raw_dest)
-        dest = ensure_extension(raw_dest)
-        print(f"  ✓ Downloaded: {dest.name}")
+        dest = await _save_download(await dl_info.value, download_dir)
+        await tab.close()
         return dest
 
-    dl_coords = await page.evaluate("""
-        () => {
-            function walk(root) {
-                for (const el of root.querySelectorAll('button, a, [role="button"]')) {
-                    const label = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '').toLowerCase().trim();
-                    if (label.includes('download')) {
-                        const r = el.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0) return { x: r.left + r.width/2, y: r.top + r.height/2, label };
-                    }
-                }
-                for (const el of root.querySelectorAll('*')) {
-                    if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
-                    if (el.tagName === 'IFRAME') {
-                        try { const ir = el.getBoundingClientRect(); const c = walk(el.contentDocument); if (c) return { x: c.x + ir.left, y: c.y + ir.top, label: c.label }; } catch(e) {}
-                    }
-                }
-                return null;
-            }
-            return walk(document);
-        }
-    """)
-    if not dl_coords:
-        print(f"  ⚠ No download button found for '{title}' — falling back to manual download")
-        return await _manual_download_fallback(page, download_dir, prompt_fn)
+    answer = prompt_fn(
+        f'Opened "{title}" in a new browser tab — take a look.\n\n'
+        "Is this the correct course outline? (y/n)"
+    ).strip().lower()
+    if answer not in ("y", "yes"):
+        await tab.close()
+        print(f"  Skipping '{title}'...")
+        return None
 
-    print(f"  ✓ Found '{dl_coords['label']}' — clicking...")
-    async with page.expect_download(timeout=30000) as dl_info:
-        await page.mouse.click(dl_coords["x"], dl_coords["y"])
-    download = await dl_info.value
-    raw_dest = download_dir / download.suggested_filename
-    await download.save_as(raw_dest)
-    dest = ensure_extension(raw_dest)
-    print(f"  ✓ Saved: {dest.name}")
+    dl_coords = await tab.evaluate(_FIND_DL_BTN_JS)
+    if dl_coords:
+        print(f"  ✓ Found '{dl_coords['label']}' — clicking...")
+        try:
+            async with tab.expect_download(timeout=15000) as dl_info:
+                await tab.mouse.click(dl_coords["x"], dl_coords["y"])
+            dest = await _save_download(await dl_info.value, download_dir)
+            await tab.close()
+            return dest
+        except Exception:
+            print("  Auto-click didn't start a download — asking user to click manually.")
+    else:
+        print("  ⚠ No Download button found automatically.")
+
+    # Manual fallback: the button (if found) is already highlighted red in the tab
+    hint = " (highlighted in red)" if dl_coords else ""
+    prompt_fn(
+        f"Click the Download button{hint} in the outline tab, then click OK."
+    )
+    try:
+        dl = await tab.wait_for_event("download", timeout=30000)
+    except Exception:
+        await tab.close()
+        raise RuntimeError("No download detected — click Download in the outline tab before clicking OK.")
+    dest = await _save_download(dl, download_dir)
+    await tab.close()
     return dest
 
 
@@ -263,21 +307,18 @@ async def _manual_download_fallback(page: Page, download_dir: Path, prompt_fn) -
     print("  No matching file confirmed — waiting for manual download...")
     answer = prompt_fn(
         "Is there a course outline in this course?\n"
-        "If YES — find it in the browser, click Download, then click Yes.\n"
+        "If YES — click Yes, then find the outline in the Brightspace tab and click Download.\n"
         "If NO — click No to skip the course outline step. (y/n)"
     )
     if answer.strip().lower() not in ("y", "yes"):
         print("  Skipping course outline — no outline present.")
         return None
+    print("  Waiting for a download (up to 2 minutes)...")
     try:
-        dl = await page.context.wait_for_event("download", timeout=30000)
-        raw_dest = download_dir / dl.suggested_filename
-        await dl.save_as(raw_dest)
-        dest = ensure_extension(raw_dest)
-        print(f"  ✓ Downloaded: {dest.name}")
-        return dest
+        dl = await page.wait_for_event("download", timeout=120000)
     except Exception:
-        raise RuntimeError("No download detected. Click Download in the browser before clicking Yes.")
+        raise RuntimeError("No download detected within 2 minutes — outline step aborted.")
+    return await _save_download(dl, download_dir)
 
 
 async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=input) -> Path:
@@ -687,7 +728,7 @@ async def _convert_outline(page, course_id: str, prompt_fn, email: str, password
 
 # ── Main orchestrator ──────────────────────────────────────────────────────────
 
-async def _run_outline_steps(page, context, course_url, email, password, dry_run, prompt_fn, rename_fn, pause_fn):
+async def _run_outline_steps(page, context, course_url, email, password, dry_run, prompt_fn, rename_fn, pause_fn, history_fn=None):
     """Inner logic for run() — shared between standalone and staged invocations."""
     course_id = await _resolve_course_id(page, course_url)
     content_url = f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
@@ -695,6 +736,16 @@ async def _run_outline_steps(page, context, course_url, email, password, dry_run
     await page.goto(content_url)
     await page.wait_for_load_state("domcontentloaded")
     await page.wait_for_timeout(5000)
+
+    if history_fn:
+        try:
+            from navigation import get_course_name
+            history_fn(
+                await get_course_name(page) or await page.title(),
+                f"{BRIGHTSPACE_BASE}/d2l/home/{course_id}",
+            )
+        except Exception:
+            pass
 
     if dry_run:
         print("⚠  DRY RUN MODE — HTML will not be pasted into Brightspace")
@@ -719,7 +770,7 @@ async def _run_outline_steps(page, context, course_url, email, password, dry_run
         await maybe_rename_staged(page, rename_fn)
 
 
-async def run(dry_run: bool = False, course_url: str = "", email: str = "", password: str = "", prompt_fn=input, rename_fn=None, context=None, page=None):
+async def run(dry_run: bool = False, course_url: str = "", email: str = "", password: str = "", prompt_fn=input, rename_fn=None, context=None, page=None, history_fn=None):
     _course_url = course_url or COURSE_URL
     _email      = email or COURSEBRIDGE_EMAIL
     _password   = password or COURSEBRIDGE_PASSWORD
@@ -729,7 +780,7 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
 
     if context is not None:
         # Called from staging — reuse the shared browser context, leave browser open
-        await _run_outline_steps(page, context, _course_url, _email, _password, dry_run, prompt_fn, rename_fn, pause_fn=prompt_fn)
+        await _run_outline_steps(page, context, _course_url, _email, _password, dry_run, prompt_fn, rename_fn, pause_fn=prompt_fn, history_fn=history_fn)
         return
 
     # Standalone — create own browser, close when done
@@ -741,7 +792,7 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
         )
         own_page = await own_ctx.new_page()
         await _wait_for_bs_login(own_page, own_ctx)
-        await _run_outline_steps(own_page, own_ctx, _course_url, _email, _password, dry_run, prompt_fn, rename_fn, pause_fn=prompt_fn)
+        await _run_outline_steps(own_page, own_ctx, _course_url, _email, _password, dry_run, prompt_fn, rename_fn, pause_fn=prompt_fn, history_fn=history_fn)
         # Stay alive until user closes the browser manually
         try:
             await own_page.wait_for_event("close", timeout=0)

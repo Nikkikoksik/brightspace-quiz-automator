@@ -19,6 +19,7 @@ if sys.platform == "win32":
 from playwright.async_api import async_playwright
 from browser import SESSION_FILE, _wait_for_login
 from staging_scraper import extract_crn, find_staging_shell
+from navigation import get_course_name
 
 _HERE   = Path(__file__).parent.parent
 BS_BASE = "https://learn.okanagancollege.ca"
@@ -362,17 +363,16 @@ async def run_step2(course_input: str, dry_run: bool = False):
         print("✓ Step 2 complete")
 
 
-async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None, note_fn=None):
+async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None, history_fn=None):
     """
     Steps 1 + 2 in a single browser session.
     Hides the blueprint module automatically, then pauses for the user to complete
     copy-components. Optionally continues through Quiz, Assignment, and Course Outline
     automators in the same browser. Browser stays open for review at the end.
-    prompt_fn: callable(str) -> str  (defaults to built-in input)
-    note_fn:   callable(str)         (called when a note should be added to the Notes tab)
+    prompt_fn:   callable(str) -> str  (defaults to built-in input)
+    history_fn:  callable(name, url, kind)  (called once per phase — staging/quiz/assignment/outline — for the History tab)
     """
     _prompt = prompt_fn if prompt_fn else input
-    _note   = note_fn if note_fn else lambda t: print(f"[NOTE] {t}")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=80, args=["--start-maximized"])
@@ -399,6 +399,13 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
         print(f"  Navigating to Content: {content_url}")
         await page.goto(content_url, wait_until="domcontentloaded")
         await page.wait_for_load_state("networkidle", timeout=30000)
+
+        if history_fn:
+            try:
+                history_fn(await get_course_name(page) or course_input, course_url, "staging")
+            except Exception:
+                pass
+
         await hide_blueprint_module(page, dry_run=dry_run)
         print("✓ Step 1 complete")
 
@@ -439,28 +446,36 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
             print("─" * 50)
             _prompt("Press OK when you are done reviewing…")
 
+        def _kind_fn(kind):
+            if not history_fn:
+                return None
+            return lambda name, url: history_fn(name, url, kind)
+
         answer = await loop.run_in_executor(None, _prompt, "Continue with Quiz Automator? (y/n): ")
         if answer.strip().lower() in ("y", "yes"):
             print("\nStarting Quiz Automator...")
             from browser import run as run_quiz
             settings = {"set_in_gradebook": True, "set_auto_submit": True}
             await run_quiz([course_url], dry_run=dry_run, settings=settings,
-                           review_fn=lambda: _review_fn("Quiz Automator"))
+                           review_fn=lambda: _review_fn("Quiz Automator"),
+                           history_fn=_kind_fn("quiz"))
 
-        answer = await loop.run_in_executor(None, _prompt, "Continue with Assignment Automator? (y/n): ")
-        if answer.strip().lower() in ("y", "yes"):
-            print("\nStarting Assignment Automator...")
-            from browser import run_assignments
-            settings = {"set_in_gradebook": True}
-            await run_assignments([course_url], dry_run=dry_run, settings=settings,
-                                  review_fn=lambda: _review_fn("Assignment Automator"))
+            answer = await loop.run_in_executor(None, _prompt, "Continue with Assignment Automator? (y/n): ")
+            if answer.strip().lower() in ("y", "yes"):
+                print("\nStarting Assignment Automator...")
+                from browser import run_assignments
+                settings = {"set_in_gradebook": True}
+                await run_assignments([course_url], dry_run=dry_run, settings=settings,
+                                      review_fn=lambda: _review_fn("Assignment Automator"),
+                                      history_fn=_kind_fn("assignment"))
 
-        answer = await loop.run_in_executor(None, _prompt, "Continue with Course Outline? (y/n): ")
-        if answer.strip().lower() in ("y", "yes"):
-            print("\nStarting Course Outline Automator...")
-            from course_outline_automator import run as run_outline
-            outline_page = await context.new_page()
-            await run_outline(dry_run=dry_run, course_url=course_url, prompt_fn=_prompt, context=context, page=outline_page)
+                answer = await loop.run_in_executor(None, _prompt, "Continue with Course Outline? (y/n): ")
+                if answer.strip().lower() in ("y", "yes"):
+                    print("\nStarting Course Outline Automator...")
+                    from course_outline_automator import run as run_outline
+                    outline_page = await context.new_page()
+                    await run_outline(dry_run=dry_run, course_url=course_url, prompt_fn=_prompt, context=context, page=outline_page,
+                                      history_fn=_kind_fn("outline"))
 
         print(f"\n{'─' * 50}")
         print("✓ All staging steps complete.")

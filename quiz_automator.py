@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Brightspace Quiz Automator — CLI entry point.
-For the GUI, run: python gui.py  (or double-click run.bat)
+For the GUI, run: python gui_pyqt6.py  (or double-click run.bat)
 
 Usage:
   python quiz_automator.py

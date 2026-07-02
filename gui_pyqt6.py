@@ -6,22 +6,22 @@ import threading
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QAction, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
+    QMainWindow, QMenu, QPushButton, QScrollArea, QSizePolicy,
+    QStackedWidget, QTextEdit, QToolButton, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from gui.constants import (
-    COURSES_FILE, ICON_PATH, OUTLINE_CFG, SESSION_FILE_GUI, UNDO_SNAPSHOT_FILE, VERSION,
+    COURSES_FILE, ICON_PATH, OUTLINE_CFG, SESSION_FILE_GUI, VERSION,
 )
 from gui.dialogs import _ThreadBridge
 from gui.panels import (
-    AssignmentPanelMixin, ContentCleanerPanelMixin, HistoryPanelMixin, NotesPanelMixin,
-    OutlinePanelMixin, QueuePanelMixin, QuizPanelMixin,
+    AssignmentPanelMixin, ContentCleanerPanelMixin, HistoryPanelMixin,
+    OutlinePanelMixin, QuizPanelMixin,
     SettingsPanelMixin, StagingPanelMixin, TimerFixPanelMixin,
 )
 from gui.telemetry import _init_sentry, _sentry_capture
@@ -36,9 +36,7 @@ class App(
     AssignmentPanelMixin,
     OutlinePanelMixin,
     ContentCleanerPanelMixin,
-    NotesPanelMixin,
     TimerFixPanelMixin,
-    QueuePanelMixin,
     HistoryPanelMixin,
     SettingsPanelMixin,
     QMainWindow,
@@ -65,7 +63,6 @@ class App(
         self._build_ui()
         self._load_courses()
         self._load_config()
-        self._load_notes()
 
         self._poll_timer = QTimer()
         self._poll_timer.timeout.connect(self._poll_log)
@@ -91,10 +88,8 @@ class App(
             ("Quiz Automator",       self._build_quiz_panel),
             ("Assignment Automator", self._build_assignment_panel),
             ("Course Outline",       self._build_outline_panel),
-            ("Notes",                self._build_notes_panel),
             ("Timer Fix",            self._build_timerfix_panel),
             ("Content Cleaner",      self._build_content_cleaner_panel),
-            ("Queue",                self._build_queue_panel),
             ("History",              self._build_history_panel),
             ("Settings",             self._build_settings_panel),
         ]:
@@ -129,21 +124,19 @@ class App(
             ("Quiz Automator", "Quizzes"),
             ("Assignment Automator", "Assignments"),
             ("Course Outline", "Course Outline"),
-            ("Notes", "Notes"),
         ]:
             layout.addWidget(self._make_nav_btn(key, label))
 
         layout.addWidget(self._sidebar_divider())
         opt = QLabel("OPTIONAL")
         opt.setStyleSheet(
-            f"color: {T['text_dim']}; font-size: 10px; font-weight: 600; "
+            f"color: {T['text_muted']}; font-size: 10px; font-weight: 600; "
             f"letter-spacing: 1px; padding: 6px 20px 2px 20px; background: transparent;"
         )
         layout.addWidget(opt)
         for key, label in [
             ("Timer Fix", "Timer Fix"),
             ("Content Cleaner", "Content Cleaner"),
-            ("Queue", "Queue"),
             ("History", "History"),
         ]:
             layout.addWidget(self._make_nav_btn(key, label))
@@ -232,10 +225,55 @@ class App(
         layout.addWidget(line)
         layout.addSpacing(20)
 
+    def _gear_button(
+        self, options: list[tuple[str, bool]],
+        extra_widget: QWidget | None = None,
+    ) -> tuple[QToolButton, dict]:
+        """Gear icon with a checkable dropdown menu. Caller places the returned button.
+        Returns (button, {label: QAction})."""
+        gear = QToolButton()
+        gear.setText("⚙")
+        gear.setToolTip("Settings")
+        gear.setCursor(Qt.CursorShape.PointingHandCursor)
+        gear.setFixedSize(32, 32)
+        gear.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        gear.setStyleSheet(f"""
+            QToolButton {{
+                background: transparent; color: {T["text_muted"]};
+                border: 1px solid {T["card_border"]}; border-radius: 16px; font-size: 15px;
+            }}
+            QToolButton:hover {{ background: {T["btn_muted"]}; color: {T["text"]}; }}
+            QToolButton::menu-indicator {{ image: none; width: 0; }}
+        """)
+        menu = QMenu(gear)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {T["card_bg"]}; color: {T["text"]};
+                border: 1px solid {T["card_border"]}; border-radius: 6px; padding: 4px;
+            }}
+            QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 4px; }}
+            QMenu::item:selected {{ background: {T["nav_hover"]}; }}
+        """)
+        actions: dict = {}
+        for label, checked in options:
+            act = QAction(label, menu)
+            act.setCheckable(True)
+            act.setChecked(checked)
+            menu.addAction(act)
+            actions[label] = act
+        if extra_widget is not None:
+            if options:
+                menu.addSeparator()
+            widget_action = QWidgetAction(menu)
+            widget_action.setDefaultWidget(extra_widget)
+            menu.addAction(widget_action)
+        gear.setMenu(menu)
+        return gear, actions
+
     def _section_label(self, layout: QVBoxLayout, text: str):
         lbl = QLabel(text)
         lbl.setStyleSheet(
-            f"color: {T['text_dim']}; font-size: 10px; font-weight: 700; "
+            f"color: {T['text_muted']}; font-size: 10px; font-weight: 700; "
             f"letter-spacing: 1px; background: transparent;"
         )
         layout.addWidget(lbl)
@@ -277,17 +315,8 @@ class App(
         if url:
             entry.setText(url)
         row_layout.addWidget(entry, stretch=1)
-        remove_btn = QPushButton("✕")
-        remove_btn.setFixedSize(36, 36)
-        remove_btn.setStyleSheet(_btn("transparent", T["btn_danger_h"], T["text_dim"]))
-        remove_btn.clicked.connect(lambda: self._remove_url_row(rows, row_widget))
-        row_layout.addWidget(remove_btn)
         container.layout().addWidget(row_widget)
         rows.append((row_widget, entry))
-
-    def _remove_url_row(self, rows: list, row_widget: QWidget):
-        rows[:] = [(w, e) for w, e in rows if w is not row_widget]
-        row_widget.deleteLater()
 
     # ── Log polling ───────────────────────────────────────────────────────────
 
@@ -304,19 +333,9 @@ class App(
                     "outline": getattr(self, "_outline_log", None),
                 }.get(tag, getattr(self, "_outline_log", None))
 
-                if tag == "note":
-                    if hasattr(self, "_notes_box"):
-                        self._notes_box.append(msg)
-                        self._save_notes()
-                    if hasattr(self, "_staging_log"):
-                        self._log_append(self._staging_log, "📝  Note added — review in the Notes tab")
-                    continue
-
                 if msg == "__QUIZ_DONE__":
                     self._quiz_run_btn.setEnabled(True)
                     self._quiz_run_btn.setText("▶  Run Quizzes")
-                    self._quiz_verify_btn.setEnabled(True)
-                    self._quiz_undo_btn.setEnabled(Path(UNDO_SNAPSHOT_FILE).exists())
                     self._resume_event.set()
                     QTimer.singleShot(0, self._post_quiz_review)
                 elif msg == "__ASSIGN_DONE__":
@@ -324,17 +343,10 @@ class App(
                     self._assign_run_btn.setText("▶  Run Assignments")
                     self._resume_event.set()
                     QTimer.singleShot(0, self._post_assign_review)
-                elif msg == "__UNDO_DONE__":
-                    self._quiz_undo_btn.setEnabled(Path(UNDO_SNAPSHOT_FILE).exists())
-                    self._quiz_undo_btn.setText("↩  Undo Last Run")
-                    self._quiz_run_btn.setEnabled(True)
-                    self._quiz_verify_btn.setEnabled(True)
                 elif msg == "__DONE__":
                     if tag == "quiz":
                         self._quiz_run_btn.setEnabled(True)
                         self._quiz_run_btn.setText("▶  Run Quizzes")
-                        self._quiz_verify_btn.setEnabled(True)
-                        self._quiz_undo_btn.setEnabled(Path(UNDO_SNAPSHOT_FILE).exists())
                         self._resume_event.set()
                     elif tag == "assign":
                         self._assign_run_btn.setEnabled(True)

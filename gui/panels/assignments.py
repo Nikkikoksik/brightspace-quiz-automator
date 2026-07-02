@@ -3,10 +3,10 @@ import sys
 import threading
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QCheckBox, QLineEdit, QMessageBox, QPushButton, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QMessageBox, QPushButton, QWidget
 
 from gui.telemetry import _sentry_capture, _sentry_context
-from gui.theme import T, _btn, _checkbox_style, _entry_style
+from gui.theme import T, _btn, _entry_style
 
 
 class AssignmentPanelMixin:
@@ -32,15 +32,8 @@ class AssignmentPanelMixin:
         layout.addWidget(add_btn)
         layout.addSpacing(16)
 
-        self._section_label(layout, "SETTINGS")
-        self._assign_gradebook_var = QCheckBox("Add to Grade Book")
-        self._assign_gradebook_var.setChecked(True)
-        self._assign_gradebook_var.setStyleSheet(_checkbox_style())
-        self._assign_dryrun = QCheckBox("Dry run  (preview only — nothing will be saved)")
-        self._assign_dryrun.setStyleSheet(_checkbox_style(warn=True))
-        for cb in [self._assign_gradebook_var, self._assign_dryrun]:
-            layout.addWidget(cb)
-        layout.addSpacing(20)
+        gear_btn, gear = self._gear_button([("Add to Grade Book", True)])
+        self._assign_gradebook_var = gear["Add to Grade Book"]
 
         self._assign_run_btn = QPushButton("▶  Run Assignments")
         self._assign_run_btn.setFixedHeight(52)
@@ -48,7 +41,11 @@ class AssignmentPanelMixin:
             _btn(T["btn_primary"], T["btn_primary_h"]) + "QPushButton { font-size: 16px; }"
         )
         self._assign_run_btn.clicked.connect(self._start_assignment_run)
-        layout.addWidget(self._assign_run_btn)
+        run_row = QHBoxLayout()
+        run_row.setSpacing(8)
+        run_row.addWidget(self._assign_run_btn, stretch=1)
+        run_row.addWidget(gear_btn)
+        layout.addLayout(run_row)
         layout.addSpacing(12)
 
         self._section_label(layout, "LOG")
@@ -66,7 +63,6 @@ class AssignmentPanelMixin:
         self._resume_event.set()
         self._assign_log.clear()
         settings = {"set_in_gradebook": self._assign_gradebook_var.isChecked()}
-        dry_run  = self._assign_dryrun.isChecked()
         ask_fn   = self._make_ask_fn()
         q        = self._log_queue
         bridge   = self._bridge
@@ -89,11 +85,11 @@ class AssignmentPanelMixin:
                 _sentry_context("assignments", urls[0] if urls else "")
                 from browser import run_assignments
                 asyncio.run(run_assignments(
-                    urls=urls, dry_run=dry_run,
+                    urls=urls, dry_run=False,
                     settings=settings, ask_fn=ask_fn, review_fn=review_fn,
+                    history_fn=lambda name, url: self._append_history([(name, url)], "assignment"),
                 ))
                 success = True
-                self._append_history(urls, "assignment")
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("assign", f"✗  {e}"))
@@ -113,7 +109,6 @@ class AssignmentPanelMixin:
         self._resume_event.set()
         self._assign_log.clear()
         settings = {"set_in_gradebook": self._assign_gradebook_var.isChecked()}
-        dry_run  = self._assign_dryrun.isChecked()
         ask_fn   = self._make_ask_fn()
         q        = self._log_queue
         bridge   = self._bridge
@@ -134,8 +129,9 @@ class AssignmentPanelMixin:
             try:
                 from browser import run_assignments
                 asyncio.run(run_assignments(
-                    urls=urls, dry_run=dry_run,
+                    urls=urls, dry_run=False,
                     settings=settings, ask_fn=ask_fn, review_fn=review_fn,
+                    history_fn=lambda name, url: self._append_history([(name, url)], "assignment"),
                 ))
             except Exception as e:
                 _sentry_capture(e)

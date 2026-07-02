@@ -52,7 +52,7 @@ run.bat             # Windows
 Or launch the GUI directly once dependencies are installed:
 
 ```bash
-python gui.py
+python gui_pyqt6.py
 ```
 
 ---
@@ -67,7 +67,6 @@ python gui.py
 ### Tips
 
 - You can add **multiple course URLs** to process them all in one run.
-- Use **Dry Run** to preview what would change without saving anything.
 - The **Resume** prompt lets you skip quizzes/assignments you've already processed if a run was interrupted.
 
 ---
@@ -82,7 +81,8 @@ The app checks for updates automatically on every launch. When a new version is 
 
 ```
 brightspace-quiz-automator/
-├── gui.py                  # GUI entry point (CustomTkinter)
+├── gui_pyqt6.py            # GUI entry point (PyQt6)
+├── gui/                    # GUI package (theme, panels, dialogs)
 ├── quiz_automator.py       # CLI fallback
 ├── src/
 │   ├── browser.py          # Browser session & run orchestration
@@ -105,7 +105,7 @@ brightspace-quiz-automator/
 ## Requirements
 
 - Python 3.10+
-- [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter)
+- [PyQt6](https://pypi.org/project/PyQt6/)
 - [Playwright](https://playwright.dev/python/) (Chromium)
 - [pdf2docx](https://github.com/ArtifexSoftware/pdf2docx)
 - [watchdog](https://github.com/gorakhargosh/watchdog)

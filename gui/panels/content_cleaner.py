@@ -28,7 +28,7 @@ class ContentCleanerPanelMixin:
         layout.addWidget(self._cleaner_url)
         layout.addSpacing(20)
 
-        self._cleaner_run_btn = QPushButton("Γû╢  Run Content Cleaner")
+        self._cleaner_run_btn = QPushButton("Run Content Cleaner")
         self._cleaner_run_btn.setFixedHeight(52)
         self._cleaner_run_btn.setStyleSheet(
             _btn(T["btn_primary"], T["btn_primary_h"]) + "QPushButton { font-size: 16px; }"
@@ -48,7 +48,7 @@ class ContentCleanerPanelMixin:
             return
 
         self._cleaner_run_btn.setEnabled(False)
-        self._cleaner_run_btn.setText("RunningΓÇª")
+        self._cleaner_run_btn.setText("Running")
         self._cleaner_log.clear()
         q = self._log_queue
 
@@ -64,7 +64,10 @@ class ContentCleanerPanelMixin:
 
             old, sys.stdout = sys.stdout, W()
             try:
-                asyncio.run(scan_course(course_url=course_url))
+                asyncio.run(scan_course(
+                    course_url=course_url,
+                    history_fn=lambda name, url: self._append_history([(name, url)], "cleaner"),
+                ))
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("cleaner", f"Γ£ù  {e}"))

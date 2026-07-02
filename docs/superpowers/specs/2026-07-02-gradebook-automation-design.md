@@ -78,6 +78,15 @@ remains available here as the final out.
 
 - `extract_categories(outline_text, gradebook_items, provider) -> structure`
   — one function, provider-agnostic.
+- **Typical weighting format** (guidance for the extraction prompt): most
+  outlines present a two-column table — "Course Component" / "Percentage of
+  Final Grade" — with one row per component (e.g. "File Types / Directory
+  Quiz — 10%", "Final Exam (Bootstrap) — 25%", "Project — 30%") and a
+  "Total 100%" row at the bottom. The prompt should look for
+  percentage-per-component structures summing to ~100%. This is the common
+  case, not a guarantee — some professors embed the table as a screenshot
+  image or use free-form text, which is what the manual-selection fallback
+  and the skip button are for.
 - Three supported providers, selected via a new dropdown in **Settings**:
   Claude, GPT, Gemini. Each needs its own API key field (same visual pattern
   as the existing CourseBridge/Sentry credential fields).

@@ -1,6 +1,4 @@
 playwright
-customtkinter
-CTkMessagebox
 watchdog
 pdf2docx
 mammoth
