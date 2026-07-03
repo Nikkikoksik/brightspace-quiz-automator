@@ -408,11 +408,15 @@ async def apply_auto_submit(page: Page, dry_run: bool, out: dict | None = None):
 
         # 4) Commit by clicking OK. Enter does NOT close this dialog in the new
         #    editor (verified live) — the OK button must be clicked by coords.
-        ok = await _find_button_coords(page, "OK")
-        if ok:
-            await _flash_click(page, ok["x"], ok["y"])
-        else:
-            await page.keyboard.press("Enter")
+        for _ in range(4):
+            ok = await _find_timer_dialog_ok_coords(page) or await _find_button_coords(page, "OK")
+            if ok:
+                await _flash_click(page, ok["x"], ok["y"])
+            else:
+                await page.keyboard.press("Enter")
+            await page.wait_for_timeout(500)
+            if not await _dialog_open():
+                break
 
         # 5) Wait for the dialog to close.
         try:
@@ -451,14 +455,27 @@ async def _find_button_coords(page: Page, exact_text: str):
     """Find a d2l-button or button by exact text, piercing shadow roots for real coords."""
     return await page.evaluate("""
         (text) => {
+            const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+            const getText = el => norm([
+                el.getAttribute?.('aria-label'),
+                el.getAttribute?.('text'),
+                el.innerText,
+                el.textContent,
+                el.shadowRoot?.innerText,
+                el.shadowRoot?.textContent
+            ].filter(Boolean).join(' '));
+            const getCoords = el => {
+                const target = el.shadowRoot?.querySelector('button, [role="button"]') || el;
+                const r = target.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0)
+                    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+                return null;
+            };
             function find(root) {
-                for (const el of root.querySelectorAll('d2l-button, button')) {
-                    if (el.textContent.trim() === text) {
-                        const target = el.shadowRoot ? el.shadowRoot.querySelector('button') : el;
-                        if (target) {
-                            const r = target.getBoundingClientRect();
-                            if (r.width > 0) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-                        }
+                for (const el of root.querySelectorAll('d2l-button, button, [role="button"]')) {
+                    if (getText(el) === text) {
+                        const coords = getCoords(el);
+                        if (coords) return coords;
                     }
                 }
                 for (const el of root.querySelectorAll('*')) {
@@ -469,6 +486,162 @@ async def _find_button_coords(page: Page, exact_text: str):
             return find(document);
         }
     """, exact_text)
+
+
+async def _find_timer_dialog_ok_coords(page: Page):
+    """Find the OK button inside the quiz timer settings dialog."""
+    return await page.evaluate("""
+        () => {
+            const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+            const getText = el => norm([
+                el.getAttribute?.('aria-label'),
+                el.getAttribute?.('text'),
+                el.innerText,
+                el.textContent,
+                el.shadowRoot?.innerText,
+                el.shadowRoot?.textContent
+            ].filter(Boolean).join(' '));
+            const getCoords = el => {
+                const target = el.shadowRoot?.querySelector('button, [role="button"]') || el;
+                const r = target.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0)
+                    return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: getText(el) };
+                return null;
+            };
+
+            function findDialog(root) {
+                const dialog = root.querySelector?.('#quiz-timer-settings-dialog');
+                if (dialog) return dialog;
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) {
+                        const found = findDialog(el.shadowRoot);
+                        if (found) return found;
+                    }
+                }
+                return null;
+            }
+
+            const dialog = findDialog(document);
+            if (!dialog) return null;
+
+            const buttons = [...dialog.querySelectorAll('d2l-button, button, [role="button"]')]
+                .map(el => ({ el, coords: getCoords(el) }))
+                .filter(item => item.coords);
+            const ok = buttons.find(item => item.coords.text === 'OK');
+            if (ok) return ok.coords;
+
+            const directOk = dialog.querySelector('d2l-button:nth-child(3)');
+            const directCoords = directOk ? getCoords(directOk) : null;
+            if (directCoords) return directCoords;
+
+            return buttons.length ? buttons[buttons.length - 1].coords : null;
+        }
+    """)
+
+
+async def _find_editor_footer_button_coords(
+    page: Page,
+    exact_text: str | None = None,
+    index: int | None = None,
+):
+    """Find a quiz editor footer button by label, or by footer order as a fallback."""
+    return await page.evaluate("""
+        ([text, index]) => {
+            const want = text ? text.replace(/\\s+/g, ' ').trim() : null;
+            const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
+            const seen = new Set();
+
+            const getText = el => norm([
+                el.getAttribute?.('aria-label'),
+                el.getAttribute?.('text'),
+                el.innerText,
+                el.textContent,
+                el.shadowRoot?.innerText,
+                el.shadowRoot?.textContent
+            ].filter(Boolean).join(' '));
+
+            const getCoords = el => {
+                const target = el.shadowRoot?.querySelector('button, [role="button"]') || el;
+                const r = target.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0)
+                    return { x: r.left + r.width / 2, y: r.top + r.height / 2, text: getText(el) };
+                return null;
+            };
+
+            function collectButtons(root, out) {
+                for (const el of root.querySelectorAll('d2l-button, button, [role="button"]')) {
+                    if (seen.has(el)) continue;
+                    seen.add(el);
+                    const coords = getCoords(el);
+                    if (coords) out.push({ el, coords });
+                }
+            }
+
+            function footerButtons(footer) {
+                const out = [];
+                const roots = [];
+                if (footer.shadowRoot) {
+                    const buttons = footer.shadowRoot.querySelector('d2l-activity-editor-buttons');
+                    if (buttons?.shadowRoot) roots.push(buttons.shadowRoot);
+                    roots.push(footer.shadowRoot);
+                }
+                roots.push(footer);
+                for (const root of roots) collectButtons(root, out);
+                return out;
+            }
+
+            function findFooter(root) {
+                for (const footer of root.querySelectorAll('d2l-activity-editor-footer')) {
+                    const buttons = footerButtons(footer);
+                    if (buttons.length) return buttons;
+                }
+                for (const el of root.querySelectorAll('*')) {
+                    if (el.shadowRoot) {
+                        const buttons = findFooter(el.shadowRoot);
+                        if (buttons?.length) return buttons;
+                    }
+                }
+                return [];
+            }
+
+            const buttons = findFooter(document);
+            if (want) {
+                const match = buttons.find(b => b.coords.text === want);
+                if (match) return match.coords;
+            }
+            if (Number.isInteger(index) && index >= 0 && index < buttons.length)
+                return buttons[index].coords;
+            return null;
+        }
+    """, [exact_text, index])
+
+
+async def _wait_for_quiz_editor_exit(page: Page, timeout: int = 10000) -> bool:
+    """Return true once Save and Close has landed back on a quiz list or editor is gone."""
+    try:
+        await page.wait_for_function("""
+            () => {
+                const url = location.href;
+                if (/\\/d2l\\/lms\\/quizzing\\/(quizzing|user\\/quizzes_list|admin\\/quizzes_manage)\\.d2l/i.test(url))
+                    return true;
+
+                function hasVisibleEditor(root) {
+                    for (const el of root.querySelectorAll('d2l-activity-editor, d2l-activity-quiz-editor')) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0) return true;
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot && hasVisibleEditor(el.shadowRoot)) return true;
+                    }
+                    return false;
+                }
+
+                return !hasVisibleEditor(document);
+            }
+        """, timeout=timeout)
+        return True
+    except Exception:
+        return False
 
 
 async def _flash_click(page: Page, x: float, y: float):
@@ -489,27 +662,49 @@ async def _flash_click(page: Page, x: float, y: float):
 
 
 async def save_quiz(page: Page, dry_run: bool):
-    """Click Save (commits changes), then Save and Close (exits editor)."""
+    """Click footer Save first, then Save and Close to leave the editor."""
     if dry_run:
-        print("    Save      : [DRY RUN] Would click Save then Save and Close")
+        print("    Save      : [DRY RUN] Would click Save, then Save and Close")
         return
     try:
-        save_coords = await _find_button_coords(page, "Save")
+        save_coords = (
+            await _find_editor_footer_button_coords(page, exact_text="Save")
+            or await _find_button_coords(page, "Save")
+            or await _find_editor_footer_button_coords(page, index=1)
+        )
         if save_coords:
             await _flash_click(page, save_coords["x"], save_coords["y"])
+            await page.wait_for_timeout(1000)
+        else:
+            print("    Save      : Save button not found - continuing to Save and Close")
 
-        sac_coords = await _find_button_coords(page, "Save and Close")
-        if not sac_coords:
-            raise Exception("Save and Close button not found")
-        await _flash_click(page, sac_coords["x"], sac_coords["y"])
-        # Navigation-safe wait: the editor tears down on save, so we wait for the
-        # real landing on Manage Quizzes — a URL you only reach if the save
-        # actually committed. 30s ceiling tolerates slow PCs / slow Brightspace.
-        try:
-            await page.wait_for_url("**/quizzes_manage.d2l*", timeout=30000)
-            print("    Save      : ✓ saved & closed")
-        except Exception:
-            print("    Save      : ⚠ did not land on Manage Quizzes within 30s")
+        for attempt in range(4):
+            sac_coords = (
+                await _find_editor_footer_button_coords(page, exact_text="Save and Close")
+                or await _find_button_coords(page, "Save and Close")
+                or await _find_editor_footer_button_coords(page, index=0)
+            )
+            if not sac_coords:
+                raise Exception("Save and Close button not found")
+            await _flash_click(page, sac_coords["x"], sac_coords["y"])
+            if await _wait_for_quiz_editor_exit(page, timeout=8000):
+                print("    Save      : saved & closed")
+                return
+            try:
+                await page.wait_for_url(
+                    lambda url: any(path in str(url) for path in (
+                        "/d2l/lms/quizzing/quizzing.d2l",
+                        "/d2l/lms/quizzing/user/quizzes_list.d2l",
+                        "/d2l/lms/quizzing/admin/quizzes_manage.d2l",
+                    )),
+                    timeout=6000,
+                )
+                print("    Save      : ✓ saved & closed")
+                return
+            except Exception:
+                if attempt < 3:
+                    print(f"    Save      : retry {attempt + 1} - still waiting for editor to close")
+        print("    Save      : did not leave quiz editor after 4 attempts")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
 
