@@ -70,3 +70,16 @@ def test_extract_categories_dispatch(monkeypatch):
 def test_extract_categories_unknown_provider():
     with pytest.raises(ValueError):
         ga.extract_categories("outline", ITEMS, "grok", "k")
+
+
+def test_html_to_text_strips_tags_and_scripts():
+    html = "<html><head><style>x{}</style></head><body><h1>Weights</h1><script>bad()</script><p>Quiz 10%</p></body></html>"
+    text = ga._html_to_text(html)
+    assert "Weights" in text and "Quiz 10%" in text
+    assert "bad()" not in text and "x{}" not in text
+
+
+def test_is_placeholder():
+    assert ga.is_placeholder("")
+    assert ga.is_placeholder("   \n  short  ")
+    assert not ga.is_placeholder("x" * 200)

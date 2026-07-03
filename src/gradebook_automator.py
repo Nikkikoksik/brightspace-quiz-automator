@@ -4,6 +4,7 @@ Gradebook Automator — outline → AI-proposed categories → review → apply.
 fetch_gradebook_items / apply_categories are STUBS until the live
 Brightspace walkthrough (see design spec 2026-07-02).
 """
+import html as _htmllib
 import json
 import re
 import sys
@@ -128,3 +129,71 @@ def extract_categories(outline_text: str, gradebook_items: list[str],
     prompt = _build_prompt(outline_text, gradebook_items)
     reply = call(prompt, api_key)
     return _parse_ai_response(reply, gradebook_items)
+
+
+def _html_to_text(html: str) -> str:
+    html = re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r'<[^>]+>', ' ', html)
+    text = _htmllib.unescape(html)
+    return re.sub(r'[ \t]+', ' ', text).strip()
+
+
+def is_placeholder(text: str) -> bool:
+    return len(text.strip()) < 100
+
+
+async def fetch_outline_text(page, course_id: str) -> str:
+    """
+    Scrape the live Course Syllabus topic HTML via the Brightspace TOC API
+    (same lookup course_outline_automator uses) and return plain text.
+    Returns "" when the topic doesn't exist or its content is empty.
+    """
+    toc_url = f"{BS_BASE}/d2l/api/le/1.4/{course_id}/content/toc"
+    toc = await page.evaluate(f"""
+        async () => {{
+            const r = await fetch('{toc_url}');
+            return r.ok ? await r.json() : null;
+        }}
+    """)
+    if not toc:
+        return ""
+
+    def find_topic(node):
+        for t in node.get("Topics", []):
+            if t.get("Title", "").strip() == "Course Syllabus":
+                return t
+        for m in node.get("Modules", []):
+            r = find_topic(m)
+            if r:
+                return r
+        return None
+
+    topic = find_topic(toc)
+    if not topic:
+        print("  No 'Course Syllabus' topic found")
+        return ""
+    topic_url = topic.get("Url", "")
+    if not topic_url:
+        return ""
+    html = await page.evaluate(f"""
+        async () => {{
+            const r = await fetch('{BS_BASE}{topic_url}');
+            return r.ok ? await r.text() : '';
+        }}
+    """)
+    return _html_to_text(html)
+
+
+def extract_text_from_file(path: Path) -> str:
+    """Local-file fallback: .pdf converted via pdf2docx first, then mammoth."""
+    path = Path(path)
+    if path.suffix.lower() == ".pdf":
+        from pdf2docx import Converter
+        docx_path = path.with_suffix(".docx")
+        cv = Converter(str(path))
+        cv.convert(str(docx_path))
+        cv.close()
+        path = docx_path
+    import mammoth
+    with open(path, "rb") as f:
+        return mammoth.extract_raw_text(f).value
