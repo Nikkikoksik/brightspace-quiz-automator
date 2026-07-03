@@ -47,3 +47,26 @@ def test_unparseable_raises():
 def test_no_categories_raises():
     with pytest.raises(ValueError):
         ga._parse_ai_response('{"categories": []}', ITEMS)
+
+
+def test_build_prompt_mentions_items_and_table_hint():
+    p = ga._build_prompt("outline text", ["Quiz 1"])
+    assert "Quiz 1" in p
+    assert "100" in p          # sums-to-~100% guidance
+    assert "JSON" in p
+
+
+def test_extract_categories_dispatch(monkeypatch):
+    calls = {}
+    def fake_claude(prompt, api_key):
+        calls["key"] = api_key
+        return GOOD_JSON
+    monkeypatch.setattr(ga, "_call_claude", fake_claude)
+    s = ga.extract_categories("outline", ITEMS, "claude", "sk-test")
+    assert calls["key"] == "sk-test"
+    assert len(s["categories"]) == 3
+
+
+def test_extract_categories_unknown_provider():
+    with pytest.raises(ValueError):
+        ga.extract_categories("outline", ITEMS, "grok", "k")
