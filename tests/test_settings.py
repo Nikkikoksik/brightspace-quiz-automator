@@ -4,7 +4,7 @@ from pathlib import Path
 import config
 
 
-EXPECTED_KEYS = {"set_in_gradebook", "set_auto_submit", "rename_moodle_titles"}
+EXPECTED_KEYS = {"set_in_gradebook", "set_auto_submit", "rename_moodle_titles", "worker_count"}
 
 
 def test_settings_has_expected_keys():

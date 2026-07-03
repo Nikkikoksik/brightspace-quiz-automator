@@ -7,4 +7,5 @@ SETTINGS = {
     "set_in_gradebook":     True,   # Not in Grade Book → In Grade Book
     "set_auto_submit":      True,   # Timer expiry → Automatically submit
     "rename_moodle_titles": False,  # Rename quiz titles containing Moodle → Brightspace
+    "worker_count":         1,      # Parallel tabs when processing quizzes (1-3)
 }

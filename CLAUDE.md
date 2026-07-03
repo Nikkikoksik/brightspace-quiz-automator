@@ -145,16 +145,15 @@ File does not exist as of 2026-06-02. Spec is in `COURSE_OUTLINE_AUTOMATOR_SPEC.
 
 `gui_pyqt6.py` is the sole GUI, replacing the old CustomTkinter `gui.py` (deleted — an archived copy remains at `archive/gui_customtkinter_legacy.py` for reference only, not imported anywhere).
 
-## Work in progress / next steps (as of 2026-07-02, synced from work machine)
-- **DONE + tested:** seamless chained flow (Staging → Quizzes → Assignments → Course Outline
-  all reuse one browser via `context=` param on `browser.run()` / `run_assignments()` /
-  outline `run()`); new-tab outline download with auto-click + red-highlight manual fallback;
-  History tab logs every phase of chained runs with clickable course URLs.
-- **NEXT ("Plan B2"):** GUI tab auto-switching during chained runs — backend `phase_fn`
-  callback at each phase transition in `run_steps_1_2`; GUI flips to the matching panel
-  (`_show_panel`) and routes log output there (log-writer tag must become switchable,
-  special message via `_log_queue` handled in `_poll_log`). Not started.
-- **THEN:** Gradebook automation — approved spec at
+## Work in progress / next steps (as of 2026-07-03)
+- **DONE + tested:** seamless chained flow (B1, one browser via `context=` param); GUI tab
+  auto-switching during chained runs (B2: `phase_fn` in `run_steps_1_2` → staging worker
+  reroutes log tag + `("phase", tag)` queue msg → `_poll_log` calls `_show_panel`).
+  Both merged to main (commit bbb44b5 + follow-ups).
+- **Known-broken CI (user deferred):** Release workflow reads version from deleted `gui.py`
+  — should read `gui/constants.py`. One-line fix in `.github/workflows/release.yml:16`.
+  Until fixed, no new installer builds (run.bat code updates unaffected).
+- **NEXT:** Gradebook automation — approved spec at
   `docs/superpowers/specs/2026-07-02-gradebook-automation-design.md`. Next step is an
   implementation plan. The two Brightspace-DOM functions (`fetch_gradebook_items`,
   `apply_categories`) get built via a live walkthrough with the user, not guessed.
