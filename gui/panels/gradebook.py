@@ -108,28 +108,29 @@ class GradebookPanelMixin:
         def worker():
             async def run():
                 from playwright.async_api import async_playwright
-                from browser import SESSION_FILE, _wait_for_login
+                from browser import _wait_for_login
                 from staging_automator import _resolve_ou
                 from gradebook_automator import fetch_gradebook_items, fetch_outline_text
 
                 async with async_playwright() as p:
                     browser = await p.chromium.launch(headless=False, args=["--start-maximized"])
-                    context = await browser.new_context(
-                        storage_state=SESSION_FILE_GUI if os.path.exists(SESSION_FILE_GUI) else None,
-                        no_viewport=True,
-                    )
-                    page = await context.new_page()
-                    await _wait_for_login(page, context)
+                    try:
+                        context = await browser.new_context(
+                            storage_state=SESSION_FILE_GUI if os.path.exists(SESSION_FILE_GUI) else None,
+                            no_viewport=True,
+                        )
+                        page = await context.new_page()
+                        await _wait_for_login(page, context)
 
-                    _, ou = await _resolve_ou(page, course_input)
-                    if not ou:
+                        _, ou = await _resolve_ou(page, course_input)
+                        if not ou:
+                            return None, None
+
+                        items = await fetch_gradebook_items(page, ou)
+                        text  = await fetch_outline_text(page, ou)
+                        return items, text
+                    finally:
                         await browser.close()
-                        return None, None
-
-                    items = await fetch_gradebook_items(page, ou)
-                    text  = await fetch_outline_text(page, ou)
-                    await browser.close()
-                    return items, text
 
             old, sys.stdout = sys.stdout, _QueueWriter(q, "gradebook")
             try:
@@ -230,18 +231,30 @@ class GradebookPanelMixin:
             None, "Choose outline file", "", "Documents (*.pdf *.docx)")
         if not path:
             return
-        import gradebook_automator as ga
-        try:
-            text = ga.extract_text_from_file(path)
-        except Exception as e:
-            self._log_append(self._gradebook_log, f"✗  Could not read file: {e}")
-            return
-        self._gb_outline_text = text
-        if not getattr(self, "_gb_items", None):
-            self._log_append(self._gradebook_log,
-                             "⚠  No gradebook items fetched yet — run Fetch first (items come from Brightspace).")
-            return
-        self._gb_run_extraction(text)
+        has_items = bool(getattr(self, "_gb_items", None))
+        q = self._log_queue
+        self._log_append(self._gradebook_log, "Reading file…")
+
+        def worker():
+            import gradebook_automator as ga
+            try:
+                text = ga.extract_text_from_file(path)
+            except Exception as e:
+                q.put(("gradebook", f"✗  Could not read file: {e}"))
+                return
+
+            def on_done():
+                self._gb_outline_text = text
+                if not has_items:
+                    self._log_append(
+                        self._gradebook_log,
+                        "⚠  No gradebook items fetched yet — run Fetch first (items come from Brightspace).")
+                    return
+                self._gb_run_extraction(text)
+
+            QTimer.singleShot(0, on_done)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _start_gb_apply(self):
         self._log_append(self._gradebook_log, "Apply flow arrives in Task 9.")
