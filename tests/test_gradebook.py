@@ -1,6 +1,16 @@
 """Tests for src/gradebook_automator.py — AI parsing, prompt, outline text helpers."""
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import pytest
 import gradebook_automator as ga
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    yield app
 
 
 ITEMS = ["Quiz 1", "Quiz 2", "Final Exam", "Project"]
@@ -83,3 +93,16 @@ def test_is_placeholder():
     assert ga.is_placeholder("")
     assert ga.is_placeholder("   \n  short  ")
     assert not ga.is_placeholder("x" * 200)
+
+
+def test_board_round_trip(qapp):
+    from gui.gradebook_board import GradebookBoard
+    s = {"categories": [{"name": "Quizzes", "weight": 25.0, "items": ["Q1", "Q2"]}],
+         "uncategorized": ["Orphan"]}
+    board = GradebookBoard()
+    board.load_structure(s)
+    out = board.to_structure()
+    assert out["categories"][0]["name"] == "Quizzes"
+    assert out["categories"][0]["weight"] == 25.0
+    assert set(out["categories"][0]["items"]) == {"Q1", "Q2"}
+    assert out["uncategorized"] == ["Orphan"]
