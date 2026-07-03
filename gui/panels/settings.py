@@ -5,7 +5,7 @@ import threading
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -95,6 +95,31 @@ class SettingsPanelMixin:
         self._sentry_dsn.setStyleSheet(_entry_style())
         sentry_layout.addWidget(self._sentry_dsn)
         layout.addWidget(sentry_frame)
+        layout.addSpacing(16)
+
+        self._section_label(layout, "AI PROVIDER (GRADEBOOK)")
+        ai_frame  = QFrame()
+        ai_frame.setStyleSheet(_card())
+        ai_layout = QVBoxLayout(ai_frame)
+        ai_layout.setContentsMargins(16, 16, 16, 16)
+        ai_layout.setSpacing(8)
+        ai_layout.addWidget(QLabel("Provider"))
+        self._ai_provider_combo = QComboBox()
+        self._ai_provider_combo.addItems(["Claude", "GPT", "Gemini"])
+        self._ai_provider_combo.setFixedHeight(36)
+        self._ai_provider_combo.setStyleSheet(_entry_style())
+        ai_layout.addWidget(self._ai_provider_combo)
+        self._ai_key_fields = {}
+        for label, key in [("Claude API key", "claude"), ("GPT API key", "gpt"),
+                           ("Gemini API key", "gemini")]:
+            ai_layout.addWidget(QLabel(label))
+            field = QLineEdit()
+            field.setFixedHeight(36)
+            field.setEchoMode(QLineEdit.EchoMode.Password)
+            field.setStyleSheet(_entry_style())
+            ai_layout.addWidget(field)
+            self._ai_key_fields[key] = field
+        layout.addWidget(ai_frame)
         layout.addSpacing(20)
 
         self._save_settings_btn = QPushButton("Save Settings")
@@ -113,6 +138,10 @@ class SettingsPanelMixin:
             sentry_dsn=dsn,
             bs_username=self._bs_username.text().strip(),
             bs_password=self._bs_password.text().strip(),
+            ai_provider=self._ai_provider_combo.currentText().lower(),
+            claude_api_key=self._ai_key_fields["claude"].text().strip(),
+            gpt_api_key=self._ai_key_fields["gpt"].text().strip(),
+            gemini_api_key=self._ai_key_fields["gemini"].text().strip(),
         )
         _init_sentry(dsn)
         self._save_settings_btn.setText("✓  Saved")

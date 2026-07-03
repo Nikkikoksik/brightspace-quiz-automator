@@ -416,12 +416,19 @@ class App(
                 _init_sentry(cfg["sentry_dsn"])
             else:
                 _init_sentry()
+            if cfg.get("ai_provider"):
+                idx = {"claude": 0, "gpt": 1, "gemini": 2}.get(cfg["ai_provider"], 0)
+                self._ai_provider_combo.setCurrentIndex(idx)
+            for k in ("claude", "gpt", "gemini"):
+                if cfg.get(f"{k}_api_key"):
+                    self._ai_key_fields[k].setText(cfg[f"{k}_api_key"])
         except (FileNotFoundError, json.JSONDecodeError):
             _init_sentry()
 
     def _save_config(
         self, course_url=None, email=None, password=None,
         sentry_dsn=None, bs_username=None, bs_password=None,
+        ai_provider=None, claude_api_key=None, gpt_api_key=None, gemini_api_key=None,
     ):
         try:
             with open(OUTLINE_CFG) as f:
@@ -434,8 +441,22 @@ class App(
         if sentry_dsn  is not None: cfg["sentry_dsn"]  = sentry_dsn
         if bs_username is not None: cfg["bs_username"]  = bs_username
         if bs_password is not None: cfg["bs_password"]  = bs_password
+        if ai_provider    is not None: cfg["ai_provider"]     = ai_provider
+        if claude_api_key is not None: cfg["claude_api_key"]  = claude_api_key
+        if gpt_api_key    is not None: cfg["gpt_api_key"]     = gpt_api_key
+        if gemini_api_key is not None: cfg["gemini_api_key"]  = gemini_api_key
         with open(OUTLINE_CFG, "w") as f:
             json.dump(cfg, f)
+
+    def _load_gradebook_creds(self) -> tuple[str, str]:
+        """Return (provider, api_key) from saved config."""
+        try:
+            with open(OUTLINE_CFG) as f:
+                cfg = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            cfg = {}
+        provider = cfg.get("ai_provider", "claude")
+        return provider, cfg.get(f"{provider}_api_key", "")
 
     # ── Ask-range helper ──────────────────────────────────────────────────────
 
