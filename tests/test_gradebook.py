@@ -89,6 +89,13 @@ def test_html_to_text_strips_tags_and_scripts():
     assert "bad()" not in text and "x{}" not in text
 
 
+def test_null_weight_becomes_zero():
+    s = ga._parse_ai_response(
+        '{"categories": [{"name": "Quizzes", "weight": null, "items": ["Quiz 1"]}]}',
+        ["Quiz 1"])
+    assert s["categories"][0]["weight"] == 0.0
+
+
 def test_is_placeholder():
     assert ga.is_placeholder("")
     assert ga.is_placeholder("   \n  short  ")

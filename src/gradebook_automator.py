@@ -47,7 +47,7 @@ def _parse_ai_response(text: str, gradebook_items: list[str]) -> dict:
         seen.update(items)
         categories.append({
             "name":   str(c.get("name", "")).strip() or "Unnamed",
-            "weight": float(c.get("weight", 0)),
+            "weight": float(c.get("weight") or 0),
             "items":  items,
         })
     uncategorized = [i for i in gradebook_items if i not in seen]
