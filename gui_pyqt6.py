@@ -380,6 +380,8 @@ class App(
                     elif tag == "gradebook":
                         self._gb_fetch_btn.setEnabled(True)
                         self._gb_fetch_btn.setText("▶   Fetch Outline + Gradebook")
+                        self._gb_apply_btn.setEnabled(True)
+                        self._gb_apply_btn.setText("▶   Apply to Brightspace (step-by-step)")
                 elif box:
                     self._log_append(box, msg)
         except queue.Empty:

@@ -257,7 +257,55 @@ class GradebookPanelMixin:
         threading.Thread(target=worker, daemon=True).start()
 
     def _start_gb_apply(self):
-        self._log_append(self._gradebook_log, "Apply flow arrives in Task 9.")
+        structure = self._gb_board.to_structure()
+        if not structure.get("categories"):
+            self._log_append(self._gradebook_log, "⚠  Nothing to apply — board is empty.")
+            return
+        course_input = self._gb_course.text().strip()
+        self._gb_apply_btn.setEnabled(False)
+        self._gb_apply_btn.setText("Applying…")
+        q = self._log_queue
+        bridge = self._bridge
+
+        def worker():
+            async def run():
+                from playwright.async_api import async_playwright
+                from browser import _wait_for_login
+                from staging_automator import _resolve_ou
+                from gradebook_automator import apply_categories
+
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=False, args=["--start-maximized"])
+                    try:
+                        context = await browser.new_context(
+                            storage_state=SESSION_FILE_GUI if os.path.exists(SESSION_FILE_GUI) else None,
+                            no_viewport=True,
+                        )
+                        page = await context.new_page()
+                        await _wait_for_login(page, context)
+
+                        _, ou = await _resolve_ou(page, course_input)
+                        if not ou:
+                            return
+
+                        def step_fn(name):
+                            bridge.prompt(f"Next: create category '{name}'. OK to continue…")
+                        await apply_categories(page, structure, step_fn)
+                    finally:
+                        await browser.close()
+
+            old, sys.stdout = sys.stdout, _QueueWriter(q, "gradebook")
+            try:
+                _sentry_context("gradebook", course_input)
+                asyncio.run(run())
+            except Exception as e:
+                _sentry_capture(e)
+                q.put(("gradebook", f"✗  {e}"))
+            finally:
+                sys.stdout = old
+                q.put(("gradebook", "__DONE__"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
 class _QueueWriter:
