@@ -122,10 +122,18 @@ class StagingPanelMixin:
         def worker():
             from staging_automator import run_steps_1_2
 
+            # Mutable so phase_fn can reroute log output to the matching tab mid-run.
+            current_tag = ["staging"]
+
             class W:
                 def write(self, t):
-                    if t.strip(): q.put(("staging", t.rstrip()))
+                    if t.strip(): q.put((current_tag[0], t.rstrip()))
                 def flush(self): pass
+
+            def phase_fn(phase):
+                tag = {"quiz": "quiz", "assignment": "assign", "outline": "outline"}.get(phase, "staging")
+                current_tag[0] = tag
+                q.put(("phase", tag))
 
             old, sys.stdout = sys.stdout, W()
             try:
@@ -134,6 +142,7 @@ class StagingPanelMixin:
                     crn, dry_run=False,
                     prompt_fn=bridge.prompt,
                     history_fn=lambda name, url, kind: self._append_history([(name, url)], kind),
+                    phase_fn=phase_fn,
                 ))
             except Exception as e:
                 _sentry_capture(e)

@@ -324,6 +324,15 @@ class App(
         try:
             while True:
                 tag, msg = self._log_queue.get_nowait()
+                if tag == "phase":
+                    panel = {
+                        "quiz":    "Quiz Automator",
+                        "assign":  "Assignment Automator",
+                        "outline": "Course Outline",
+                    }.get(msg)
+                    if panel:
+                        self._show_panel(panel)
+                    continue
                 box = {
                     "quiz":    getattr(self, "_quiz_log",    None),
                     "assign":  getattr(self, "_assign_log",  None),

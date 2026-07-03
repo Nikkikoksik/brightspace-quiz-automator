@@ -363,7 +363,7 @@ async def run_step2(course_input: str, dry_run: bool = False):
         print("✓ Step 2 complete")
 
 
-async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None, history_fn=None):
+async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None, history_fn=None, phase_fn=None):
     """
     Steps 1 + 2 in a single browser session.
     Hides the blueprint module automatically, then pauses for the user to complete
@@ -371,6 +371,8 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
     automators in the same browser. Browser stays open for review at the end.
     prompt_fn:   callable(str) -> str  (defaults to built-in input)
     history_fn:  callable(name, url, kind)  (called once per phase — staging/quiz/assignment/outline — for the History tab)
+    phase_fn:    callable(phase)  (called right before each phase starts — "quiz"/"assignment"/"outline" —
+                 so the GUI can switch its visible tab to match)
     """
     _prompt = prompt_fn if prompt_fn else input
 
@@ -452,6 +454,8 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
 
         answer = await loop.run_in_executor(None, _prompt, "Continue with Quiz Automator? (y/n): ")
         if answer.strip().lower() in ("y", "yes"):
+            if phase_fn:
+                phase_fn("quiz")
             print("\nStarting Quiz Automator...")
             from browser import run as run_quiz
             settings = {"set_in_gradebook": True, "set_auto_submit": True}
@@ -461,6 +465,8 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
 
             answer = await loop.run_in_executor(None, _prompt, "Continue with Assignment Automator? (y/n): ")
             if answer.strip().lower() in ("y", "yes"):
+                if phase_fn:
+                    phase_fn("assignment")
                 print("\nStarting Assignment Automator...")
                 from browser import run_assignments
                 settings = {"set_in_gradebook": True}
@@ -470,6 +476,8 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
 
                 answer = await loop.run_in_executor(None, _prompt, "Continue with Course Outline? (y/n): ")
                 if answer.strip().lower() in ("y", "yes"):
+                    if phase_fn:
+                        phase_fn("outline")
                     print("\nStarting Course Outline Automator...")
                     from course_outline_automator import run as run_outline
                     outline_page = await context.new_page()
