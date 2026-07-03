@@ -153,10 +153,16 @@ File does not exist as of 2026-06-02. Spec is in `COURSE_OUTLINE_AUTOMATOR_SPEC.
 - **Known-broken CI (user deferred):** Release workflow reads version from deleted `gui.py`
   — should read `gui/constants.py`. One-line fix in `.github/workflows/release.yml:16`.
   Until fixed, no new installer builds (run.bat code updates unaffected).
-- **NEXT:** Gradebook automation — approved spec at
-  `docs/superpowers/specs/2026-07-02-gradebook-automation-design.md`. Next step is an
-  implementation plan. The two Brightspace-DOM functions (`fetch_gradebook_items`,
-  `apply_categories`) get built via a live walkthrough with the user, not guessed.
+- **DONE (awaiting user dev.bat test):** Gradebook automation Tasks 1-9 built on nick
+  (commits 68bb7a7..5e74e23, 55 tests pass, final review READY). New: Gradebook tab,
+  `src/gradebook_automator.py`, `gui/gradebook_board.py`, Settings AI-provider card.
+  Plan: `docs/superpowers/plans/2026-07-03-gradebook-automation.md`; ledger `.superpowers/sdd/progress.md`.
+- **NEXT (Task 10, live walkthrough):** real `fetch_gradebook_items` / `apply_categories`
+  — user demonstrates Grades-page click-path in a real course; expect D2L shadow-DOM
+  coordinate-click pattern. Must fix alongside it: silent invalid-weight→0.0 on board;
+  gradebook `__DONE__` re-enables Apply unconditionally; `extract_text_from_file` writes
+  .docx beside user's PDF.
+- **OPEN QUESTION:** where do the canned scenario comments go (currently log+clipboard)?
 
 ## Current state (as of 2026-07-02)
 - 8 tabs: Staging, Quizzes, Assignments, Course Outline, Timer Fix, Content Cleaner, History, Settings (Notes and Queue tabs were removed; History is being redesigned — see below)
