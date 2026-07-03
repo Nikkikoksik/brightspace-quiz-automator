@@ -20,8 +20,8 @@ from gui.constants import (
 )
 from gui.dialogs import _ThreadBridge
 from gui.panels import (
-    AssignmentPanelMixin, ContentCleanerPanelMixin, HistoryPanelMixin,
-    OutlinePanelMixin, QuizPanelMixin,
+    AssignmentPanelMixin, ContentCleanerPanelMixin, GradebookPanelMixin,
+    HistoryPanelMixin, OutlinePanelMixin, QuizPanelMixin,
     SettingsPanelMixin, StagingPanelMixin, TimerFixPanelMixin,
 )
 from gui.telemetry import _init_sentry, _sentry_capture
@@ -35,6 +35,7 @@ class App(
     QuizPanelMixin,
     AssignmentPanelMixin,
     OutlinePanelMixin,
+    GradebookPanelMixin,
     ContentCleanerPanelMixin,
     TimerFixPanelMixin,
     HistoryPanelMixin,
@@ -88,6 +89,7 @@ class App(
             ("Quiz Automator",       self._build_quiz_panel),
             ("Assignment Automator", self._build_assignment_panel),
             ("Course Outline",       self._build_outline_panel),
+            ("Gradebook",            self._build_gradebook_panel),
             ("Timer Fix",            self._build_timerfix_panel),
             ("Content Cleaner",      self._build_content_cleaner_panel),
             ("History",              self._build_history_panel),
@@ -124,6 +126,7 @@ class App(
             ("Quiz Automator", "Quizzes"),
             ("Assignment Automator", "Assignments"),
             ("Course Outline", "Course Outline"),
+            ("Gradebook", "Gradebook"),
         ]:
             layout.addWidget(self._make_nav_btn(key, label))
 
@@ -340,6 +343,7 @@ class App(
                     "cleaner": getattr(self, "_cleaner_log", None),
                     "staging": getattr(self, "_staging_log", None),
                     "outline": getattr(self, "_outline_log", None),
+                    "gradebook": getattr(self, "_gradebook_log", None),
                 }.get(tag, getattr(self, "_outline_log", None))
 
                 if msg == "__QUIZ_DONE__":
@@ -373,6 +377,9 @@ class App(
                     elif tag == "outline":
                         self._outline_run_btn.setEnabled(True)
                         self._outline_run_btn.setText("▶  Run Course Outline")
+                    elif tag == "gradebook":
+                        self._gb_fetch_btn.setEnabled(True)
+                        self._gb_fetch_btn.setText("▶   Fetch Outline + Gradebook")
                 elif box:
                     self._log_append(box, msg)
         except queue.Empty:

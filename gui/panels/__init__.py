@@ -2,6 +2,7 @@ from gui.panels.staging    import StagingPanelMixin
 from gui.panels.quiz       import QuizPanelMixin
 from gui.panels.assignments import AssignmentPanelMixin
 from gui.panels.outline    import OutlinePanelMixin
+from gui.panels.gradebook  import GradebookPanelMixin
 from gui.panels.timer_fix  import TimerFixPanelMixin
 from gui.panels.content_cleaner import ContentCleanerPanelMixin
 from gui.panels.history    import HistoryPanelMixin
@@ -12,6 +13,7 @@ __all__ = [
     "QuizPanelMixin",
     "AssignmentPanelMixin",
     "OutlinePanelMixin",
+    "GradebookPanelMixin",
     "TimerFixPanelMixin",
     "ContentCleanerPanelMixin",
     "HistoryPanelMixin",
