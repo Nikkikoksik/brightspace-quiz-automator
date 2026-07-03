@@ -197,3 +197,22 @@ def extract_text_from_file(path: Path) -> str:
     import mammoth
     with open(path, "rb") as f:
         return mammoth.extract_raw_text(f).value
+
+
+# ─── STUBS — to be implemented via live Brightspace walkthrough ──────────────
+# (spec 2026-07-02: do NOT guess Grades-page selectors; the user demonstrates
+# the real click-path and that becomes the implementation.)
+
+async def fetch_gradebook_items(page, course_id: str) -> list[str]:
+    """STUB: read existing gradebook item names from the Grades page."""
+    print("  ⚠ STUB fetch_gradebook_items — returning sample data")
+    return ["[STUB] Quiz 1", "[STUB] Assignment 1", "[STUB] Final Exam"]
+
+
+async def apply_categories(page, structure: dict, step_fn) -> None:
+    """STUB: create categories and move items via the Grades UI, one category
+    at a time; step_fn(name) pauses before each category."""
+    for cat in structure["categories"]:
+        step_fn(cat["name"])
+        print(f"  ⚠ STUB apply_categories — would create '{cat['name']}' "
+              f"({cat['weight']}%) with {len(cat['items'])} item(s)")
