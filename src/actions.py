@@ -1072,21 +1072,40 @@ async def save_assignment(page: Page, dry_run: bool):
         print("    Save      : [DRY RUN] Would click Save and Close")
         return
     try:
-        save_coords = await _find_button_coords(page, "Save")
+        save_coords = (
+            await _find_editor_footer_button_coords(page, exact_text="Save")
+            or await _find_button_coords(page, "Save")
+            or await _find_editor_footer_button_coords(page, index=1)
+        )
         if save_coords:
             print(f"    Save      : clicking Save at ({save_coords['x']}, {save_coords['y']})...")
             await _flash_click(page, save_coords["x"], save_coords["y"])
             print("    Save      : Save clicked ✓")
+            await page.wait_for_timeout(1000)
         else:
             print("    Save      : ⚠ Save button not found — skipping intermediate save")
 
-        sac_coords = await _find_button_coords(page, "Save and Close")
-        if not sac_coords:
-            raise Exception("Save and Close button not found")
-        print(f"    Save      : clicking Save and Close at ({sac_coords['x']}, {sac_coords['y']})...")
-        await _flash_click(page, sac_coords["x"], sac_coords["y"])
-        print("    Save      : clicked — waiting for navigation...")
-        await page.wait_for_load_state("domcontentloaded", timeout=15000)
-        print(f"    Save      : ✓  (landed on {page.url[-60:]})")
+        for attempt in range(4):
+            sac_coords = (
+                await _find_editor_footer_button_coords(page, exact_text="Save and Close")
+                or await _find_button_coords(page, "Save and Close")
+                or await _find_editor_footer_button_coords(page, index=0)
+            )
+            if not sac_coords:
+                raise Exception("Save and Close button not found")
+            print(f"    Save      : clicking Save and Close at ({sac_coords['x']}, {sac_coords['y']})...")
+            await _flash_click(page, sac_coords["x"], sac_coords["y"])
+            print("    Save      : clicked — waiting for editor to close...")
+            if await _wait_for_quiz_editor_exit(page, timeout=8000):
+                print(f"    Save      : ✓  (landed on {page.url[-60:]})")
+                return
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=6000)
+                print(f"    Save      : ✓  (landed on {page.url[-60:]})")
+                return
+            except Exception:
+                if attempt < 3:
+                    print(f"    Save      : retry {attempt + 1} - still waiting for editor to close")
+        print("    Save      : did not leave assignment editor after 4 attempts")
     except Exception as e:
         print(f"    Save      : ✗ {e}")
