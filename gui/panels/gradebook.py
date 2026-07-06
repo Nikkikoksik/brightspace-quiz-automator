@@ -28,6 +28,7 @@ class GradebookPanelMixin:
             "e.g. 31899  or  https://learn.okanagancollege.ca/d2l/home/…")
         self._gb_course.setFixedHeight(40)
         self._gb_course.setStyleSheet(_entry_style())
+        self._gb_course.textChanged.connect(self._sync_current_course)
         layout.addWidget(self._gb_course)
         layout.addSpacing(10)
 
@@ -98,6 +99,7 @@ class GradebookPanelMixin:
 
     def _start_gb_fetch(self):
         course_input = self._gb_course.text().strip()
+        self._sync_current_course(course_input)
         if not course_input:
             self._log_append(self._gradebook_log, "⚠  Enter a CRN or URL.")
             return
@@ -151,6 +153,21 @@ class GradebookPanelMixin:
         import gradebook_automator as ga
         self._gb_items, self._gb_outline_text = data["items"], text
         self._gb_skip_btn.show()
+        if getattr(self, "_gb_force_term_work", False):
+            self._gb_force_term_work = False
+            if data["categories"]:
+                self._gb_board.load_structure({
+                    "categories": data["categories"],
+                    "uncategorized": data["uncategorized"],
+                })
+                self._gb_apply_btn.setEnabled(True)
+                self._log_append(self._gradebook_log, "Existing gradebook categories already exist; review them manually instead of Term Work.")
+                return
+            self._gb_banner.setText("No course outline selected; prepared a single Term Work category.")
+            self._gb_banner.show()
+            self._gb_termwork_btn.hide()
+            self._gb_term_work()
+            return
         if data["categories"]:
             # Gradebook already has categories — preload the real structure,
             # skip AI. User can still rearrange on the board.
@@ -238,6 +255,13 @@ class GradebookPanelMixin:
         self._log_append(self._gradebook_log, f"Comment (copied to clipboard): {self.SKIP_COMMENT}")
         self._gb_apply_btn.setEnabled(False)
 
+    def _prepare_term_work_for_course(self, course_input: str):
+        self._gb_force_term_work = True
+        self._sync_current_course(course_input)
+        self._show_panel("Gradebook")
+        self._gb_course.setText(course_input)
+        self._start_gb_fetch()
+
     def _gb_pick_file(self):
         path, _ = QFileDialog.getOpenFileName(
             None, "Choose outline file", "", "Documents (*.pdf *.docx)")
@@ -274,6 +298,7 @@ class GradebookPanelMixin:
             self._log_append(self._gradebook_log, "⚠  Nothing to apply — board is empty.")
             return
         course_input = self._gb_course.text().strip()
+        self._sync_current_course(course_input)
         self._gb_apply_btn.setEnabled(False)
         self._gb_apply_btn.setText("Applying…")
         q = self._log_queue

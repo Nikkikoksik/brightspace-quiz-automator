@@ -369,6 +369,7 @@ async def run_steps_1_2(
     prompt_fn=None,
     history_fn=None,
     phase_fn=None,
+    no_outline_fn=None,
     coursebridge_email: str = "",
     coursebridge_password: str = "",
 ):
@@ -379,8 +380,8 @@ async def run_steps_1_2(
     automators in the same browser. Browser stays open for review at the end.
     prompt_fn:   callable(str) -> str  (defaults to built-in input)
     history_fn:  callable(name, url, kind)  (called once per phase — staging/quiz/assignment/outline — for the History tab)
-    phase_fn:    callable(phase)  (called right before each phase starts — "quiz"/"assignment"/"outline" —
-                 so the GUI can switch its visible tab to match)
+    phase_fn:    callable(phase)  (called right before each phase starts — "quiz"/"assignment"/"outline"/"gradebook" —
+                  so the GUI can switch its visible tab to match)
     """
     _prompt = prompt_fn if prompt_fn else input
 
@@ -499,6 +500,17 @@ async def run_steps_1_2(
                         page=outline_page,
                         history_fn=_kind_fn("outline"),
                     )
+                else:
+                    answer = await loop.run_in_executor(
+                        None,
+                        _prompt,
+                        "No course outline selected. Prepare a Term Work gradebook instead? (y/n): ",
+                    )
+                    if answer.strip().lower() in ("y", "yes") and no_outline_fn:
+                        if phase_fn:
+                            phase_fn("gradebook")
+                        print("\nOpening Gradebook for Term Work setup...")
+                        no_outline_fn(course_url)
 
         print(f"\n{'─' * 50}")
         print("✓ All staging steps complete.")

@@ -57,6 +57,7 @@ class AssignmentPanelMixin:
         if not urls:
             self._log_append(self._assign_log, "⚠  No URLs entered.")
             return
+        self._sync_current_course(urls[0])
         self._last_assign_urls = urls
         self._assign_run_btn.setEnabled(False)
         self._assign_run_btn.setText("Running…")
@@ -102,6 +103,7 @@ class AssignmentPanelMixin:
     def _run_assignments_for(self, urls: list):
         if not urls:
             return
+        self._sync_current_course(urls[0])
         self._show_panel("Assignment Automator")
         self._last_assign_urls = urls
         self._assign_run_btn.setEnabled(False)

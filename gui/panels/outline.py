@@ -24,6 +24,7 @@ class OutlinePanelMixin:
         )
         self._outline_url.setFixedHeight(38)
         self._outline_url.setStyleSheet(_entry_style())
+        self._outline_url.textChanged.connect(self._sync_current_course)
         layout.addWidget(self._outline_url)
         layout.addSpacing(20)
 
@@ -42,6 +43,7 @@ class OutlinePanelMixin:
 
     def _start_outline_run(self):
         course_url = self._outline_url.text().strip()
+        self._sync_current_course(course_url)
         email      = self._cb_email.text().strip()
         password   = self._cb_password.text().strip()
         if not course_url:

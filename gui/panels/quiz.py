@@ -79,6 +79,7 @@ class QuizPanelMixin:
         if not urls:
             self._log_append(self._quiz_log, "⚠  No URLs entered.")
             return
+        self._sync_current_course(urls[0])
         self._save_courses(urls)
         self._last_quiz_urls = urls
         self._quiz_run_btn.setEnabled(False)
@@ -129,6 +130,7 @@ class QuizPanelMixin:
     def _run_quizzes_for(self, urls: list):
         if not urls:
             return
+        self._sync_current_course(urls[0])
         self._show_panel("Quiz Automator")
         self._last_quiz_urls = urls
         self._quiz_run_btn.setEnabled(False)

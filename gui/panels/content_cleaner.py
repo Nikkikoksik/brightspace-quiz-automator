@@ -25,6 +25,7 @@ class ContentCleanerPanelMixin:
         )
         self._cleaner_url.setFixedHeight(38)
         self._cleaner_url.setStyleSheet(_entry_style())
+        self._cleaner_url.textChanged.connect(self._sync_current_course)
         layout.addWidget(self._cleaner_url)
         layout.addSpacing(20)
 
@@ -43,6 +44,7 @@ class ContentCleanerPanelMixin:
 
     def _start_content_cleaner_run(self):
         course_url = self._cleaner_url.text().strip()
+        self._sync_current_course(course_url)
         if not course_url:
             self._log_append(self._cleaner_log, "ΓÜá  Course URL or CRN is required.")
             return

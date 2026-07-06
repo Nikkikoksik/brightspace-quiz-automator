@@ -27,6 +27,7 @@ class StagingPanelMixin:
         )
         self._staging_crn.setFixedHeight(40)
         self._staging_crn.setStyleSheet(_entry_style())
+        self._staging_crn.textChanged.connect(self._sync_current_course)
         self._staging_crn.editingFinished.connect(self._auto_extract_crn)
         layout.addWidget(self._staging_crn)
         layout.addSpacing(16)
@@ -110,6 +111,7 @@ class StagingPanelMixin:
 
     def _start_staging_steps_1_2(self):
         crn = self._staging_crn.text().strip()
+        self._sync_current_course(crn)
         if not crn:
             self._log_append(self._staging_log, "⚠  Enter a CRN or URL.")
             return
@@ -133,7 +135,12 @@ class StagingPanelMixin:
                 def flush(self): pass
 
             def phase_fn(phase):
-                tag = {"quiz": "quiz", "assignment": "assign", "outline": "outline"}.get(phase, "staging")
+                tag = {
+                    "quiz": "quiz",
+                    "assignment": "assign",
+                    "outline": "outline",
+                    "gradebook": "gradebook",
+                }.get(phase, "staging")
                 current_tag[0] = tag
                 q.put(("phase", tag))
 
@@ -145,6 +152,7 @@ class StagingPanelMixin:
                     prompt_fn=bridge.prompt,
                     history_fn=lambda name, url, kind: self._append_history([(name, url)], kind),
                     phase_fn=phase_fn,
+                    no_outline_fn=lambda course_url: q.put(("term_work", course_url)),
                     coursebridge_email=coursebridge_email,
                     coursebridge_password=coursebridge_password,
                 ))

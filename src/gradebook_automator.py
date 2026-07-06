@@ -243,9 +243,9 @@ async def fetch_gradebook_items(page, course_id: str) -> dict:
      "uncategorized": [item names not under any category]}.
     "categories" is empty when the gradebook has no categories yet.
     """
-    manage_url = f"{BS_BASE}/d2l/lms/grades/admin/manage/main.d2l?ou={course_id}"
-    print("  Opening Manage Grades...")
-    await page.goto(manage_url, wait_until="domcontentloaded")
+    grades_url = f"{BS_BASE}/d2l/lms/grades/index.d2l?ou={course_id}"
+    print("  Opening Grades...")
+    await page.goto(grades_url, wait_until="domcontentloaded")
 
     async def _find_grades_frame(timeout_ms):
         # The Manage Grades table renders inside a D2L content iframe, so the
@@ -262,7 +262,7 @@ async def fetch_gradebook_items(page, course_id: str) -> dict:
             waited += 300
         return None
 
-    frame = await _find_grades_frame(10000)
+    frame = await _find_grades_frame(5000)
     if frame is None:
         # Direct URL didn't land on Manage Grades — go via the Grades tab link.
         print("  Direct URL failed — navigating via Grades tab...")
@@ -275,6 +275,13 @@ async def fetch_gradebook_items(page, course_id: str) -> dict:
         frame = await _find_grades_frame(15000)
     if frame is None:
         print("  ✗ Could not find the Manage Grades table (table#z_b) in any frame")
+        print(f"  Current page: {page.url}")
+        print(f"  Frames seen: {len(page.frames)}")
+        for i, frame_info in enumerate(page.frames, start=1):
+            try:
+                print(f"    [{i}] {frame_info.url[:160]}")
+            except Exception:
+                print(f"    [{i}] <frame url unavailable>")
         return {"items": [], "categories": [], "uncategorized": []}
 
     rows = await frame.evaluate(_PARSE_GRADES_TABLE_JS)
