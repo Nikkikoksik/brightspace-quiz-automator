@@ -118,6 +118,8 @@ class StagingPanelMixin:
         self._staging_log.clear()
         q       = self._log_queue
         bridge  = self._bridge
+        coursebridge_email    = self._cb_email.text().strip()
+        coursebridge_password = self._cb_password.text().strip()
 
         def worker():
             from staging_automator import run_steps_1_2
@@ -143,6 +145,8 @@ class StagingPanelMixin:
                     prompt_fn=bridge.prompt,
                     history_fn=lambda name, url, kind: self._append_history([(name, url)], kind),
                     phase_fn=phase_fn,
+                    coursebridge_email=coursebridge_email,
+                    coursebridge_password=coursebridge_password,
                 ))
             except Exception as e:
                 _sentry_capture(e)

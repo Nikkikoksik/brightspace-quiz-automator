@@ -363,7 +363,15 @@ async def run_step2(course_input: str, dry_run: bool = False):
         print("✓ Step 2 complete")
 
 
-async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None, history_fn=None, phase_fn=None):
+async def run_steps_1_2(
+    course_input: str,
+    dry_run: bool = False,
+    prompt_fn=None,
+    history_fn=None,
+    phase_fn=None,
+    coursebridge_email: str = "",
+    coursebridge_password: str = "",
+):
     """
     Steps 1 + 2 in a single browser session.
     Hides the blueprint module automatically, then pauses for the user to complete
@@ -481,8 +489,16 @@ async def run_steps_1_2(course_input: str, dry_run: bool = False, prompt_fn=None
                     print("\nStarting Course Outline Automator...")
                     from course_outline_automator import run as run_outline
                     outline_page = await context.new_page()
-                    await run_outline(dry_run=dry_run, course_url=course_url, prompt_fn=_prompt, context=context, page=outline_page,
-                                      history_fn=_kind_fn("outline"))
+                    await run_outline(
+                        dry_run=dry_run,
+                        course_url=course_url,
+                        email=coursebridge_email,
+                        password=coursebridge_password,
+                        prompt_fn=_prompt,
+                        context=context,
+                        page=outline_page,
+                        history_fn=_kind_fn("outline"),
+                    )
 
         print(f"\n{'─' * 50}")
         print("✓ All staging steps complete.")

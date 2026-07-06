@@ -199,14 +199,113 @@ def extract_text_from_file(path: Path) -> str:
         return mammoth.extract_raw_text(f).value
 
 
-# ─── STUBS — to be implemented via live Brightspace walkthrough ──────────────
+# Row classification comes from the edit-link onclick handlers on the Manage
+# Grades table (table#z_b): gotoNewEditItemProps = grade item,
+# gotoNewEditCatProps = category, gotoNewEditFinalGradeProps = final-grade row
+# (skipped). Item rows nested under a category carry padding-left on their
+# th.d_ich cell. Selectors confirmed against live HTML provided by the user
+# (course ou=11320, 2026-07-03).
+
+_PARSE_GRADES_TABLE_JS = """
+    () => {
+        const table = document.querySelector('table#z_b');
+        if (!table) return null;
+        const rows = [];
+        for (const tr of table.querySelectorAll('tr')) {
+            const th = tr.querySelector('th.d_ich');
+            if (!th) continue;
+            const link = th.querySelector('a.d2l-link');
+            if (!link) continue;
+            const onclick = link.getAttribute('onclick') || '';
+            let kind = null;
+            if (onclick.includes('gotoNewEditItemProps'))       kind = 'item';
+            else if (onclick.includes('gotoNewEditCatProps'))   kind = 'category';
+            else if (onclick.includes('gotoNewEditFinalGradeProps')) continue;
+            else continue;
+            const cells = tr.querySelectorAll('td');
+            const weightCell = cells[cells.length - 1];
+            rows.push({
+                kind,
+                name:   link.textContent.trim(),
+                nested: (th.getAttribute('style') || '').includes('padding-left'),
+                weight: weightCell ? weightCell.textContent.trim() : '',
+            });
+        }
+        return rows;
+    }
+"""
+
+
+async def fetch_gradebook_items(page, course_id: str) -> dict:
+    """
+    Read the Manage Grades table for the course. Returns
+    {"items": [all item names], "categories": [{"name", "weight", "items": [...]}],
+     "uncategorized": [item names not under any category]}.
+    "categories" is empty when the gradebook has no categories yet.
+    """
+    manage_url = f"{BS_BASE}/d2l/lms/grades/admin/manage/main.d2l?ou={course_id}"
+    print("  Opening Manage Grades...")
+    await page.goto(manage_url, wait_until="domcontentloaded")
+
+    async def _find_grades_frame(timeout_ms):
+        # The Manage Grades table renders inside a D2L content iframe, so the
+        # top-level page never sees table#z_b. Poll every frame for it.
+        waited = 0
+        while waited < timeout_ms:
+            for frame in page.frames:
+                try:
+                    if await frame.query_selector("table#z_b"):
+                        return frame
+                except Exception:
+                    continue
+            await page.wait_for_timeout(300)
+            waited += 300
+        return None
+
+    frame = await _find_grades_frame(10000)
+    if frame is None:
+        # Direct URL didn't land on Manage Grades — go via the Grades tab link.
+        print("  Direct URL failed — navigating via Grades tab...")
+        await page.goto(f"{BS_BASE}/d2l/lms/grades/index.d2l?ou={course_id}",
+                        wait_until="domcontentloaded")
+        try:
+            await page.locator("a.d2l-tool-areas-link:has-text('Manage Grades')").first.click()
+        except Exception:
+            pass
+        frame = await _find_grades_frame(15000)
+    if frame is None:
+        print("  ✗ Could not find the Manage Grades table (table#z_b) in any frame")
+        return {"items": [], "categories": [], "uncategorized": []}
+
+    rows = await frame.evaluate(_PARSE_GRADES_TABLE_JS)
+    if not rows:
+        print("  No grade items found in Manage Grades table")
+        return {"items": [], "categories": [], "uncategorized": []}
+
+    categories, uncategorized, items = [], [], []
+    current_cat = None
+    for r in rows:
+        if r["kind"] == "category":
+            try:
+                weight = float(r["weight"])
+            except (TypeError, ValueError):
+                weight = 0.0
+            current_cat = {"name": r["name"], "weight": weight, "items": []}
+            categories.append(current_cat)
+        else:
+            items.append(r["name"])
+            if r["nested"] and current_cat is not None:
+                current_cat["items"].append(r["name"])
+            else:
+                uncategorized.append(r["name"])
+
+    print(f"  Found {len(items)} item(s), {len(categories)} existing categor(ies)")
+    return {"items": items, "categories": categories, "uncategorized": uncategorized}
+
+
+# ─── STUB — to be implemented via live Brightspace walkthrough ───────────────
 # (spec 2026-07-02: do NOT guess Grades-page selectors; the user demonstrates
 # the real click-path and that becomes the implementation.)
-
-async def fetch_gradebook_items(page, course_id: str) -> list[str]:
-    """STUB: read existing gradebook item names from the Grades page."""
-    print("  ⚠ STUB fetch_gradebook_items — returning sample data")
-    return ["[STUB] Quiz 1", "[STUB] Assignment 1", "[STUB] Final Exam"]
 
 
 async def apply_categories(page, structure: dict, step_fn) -> None:

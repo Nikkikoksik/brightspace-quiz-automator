@@ -126,18 +126,18 @@ class GradebookPanelMixin:
                         if not ou:
                             return None, None
 
-                        items = await fetch_gradebook_items(page, ou)
-                        text  = await fetch_outline_text(page, ou)
-                        return items, text
+                        data = await fetch_gradebook_items(page, ou)
+                        text = await fetch_outline_text(page, ou)
+                        return data, text
                     finally:
                         await browser.close()
 
             old, sys.stdout = sys.stdout, _QueueWriter(q, "gradebook")
             try:
                 _sentry_context("gradebook", course_input)
-                items, text = asyncio.run(run())
-                if items is not None:
-                    QTimer.singleShot(0, lambda: self._gb_on_fetched(items, text))
+                data, text = asyncio.run(run())
+                if data is not None:
+                    QTimer.singleShot(0, lambda: self._gb_on_fetched(data, text))
             except Exception as e:
                 _sentry_capture(e)
                 q.put(("gradebook", f"✗  {e}"))
@@ -147,10 +147,22 @@ class GradebookPanelMixin:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _gb_on_fetched(self, items, text):
+    def _gb_on_fetched(self, data, text):
         import gradebook_automator as ga
-        self._gb_items, self._gb_outline_text = items, text
+        self._gb_items, self._gb_outline_text = data["items"], text
         self._gb_skip_btn.show()
+        if data["categories"]:
+            # Gradebook already has categories — preload the real structure,
+            # skip AI. User can still rearrange on the board.
+            self._gb_board.load_structure({
+                "categories":    data["categories"],
+                "uncategorized": data["uncategorized"],
+            })
+            self._gb_apply_btn.setEnabled(True)
+            self._log_append(self._gradebook_log,
+                             f"✓  Loaded existing gradebook structure: "
+                             f"{len(data['categories'])} categories, {len(data['items'])} items.")
+            return
         if ga.is_placeholder(text):
             self._gb_banner.setText(
                 "No syllabus content found — create a single Term Work category?")

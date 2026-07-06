@@ -9,6 +9,7 @@ Usage:
 
 import asyncio
 import argparse
+import json
 import os
 import re
 import sys
@@ -34,6 +35,27 @@ COURSE_URL            = ""
 _HERE           = Path(__file__).parent.parent
 BS_SESSION_FILE = str(_HERE / "session.json")
 CB_SESSION_FILE = str(_HERE / "cb_session.json")
+
+
+def _userdata_dir() -> Path:
+    if os.name == "nt":
+        root = os.environ.get("APPDATA")
+        if root:
+            return Path(root) / "BrightspaceAutomator"
+    return Path.home() / ".local" / "share" / "BrightspaceAutomator"
+
+
+def _outline_config_path() -> Path:
+    return _userdata_dir() / "outline_config.json"
+
+
+def _load_saved_coursebridge_credentials() -> tuple[str, str]:
+    try:
+        with open(_outline_config_path(), encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg.get("cb_email", ""), cfg.get("cb_password", "")
+    except (OSError, json.JSONDecodeError):
+        return "", ""
 
 # JS that walks shadow DOM + same-origin iframes and returns visible buttons.
 # Pass {hints: ["word"]} to return first match, or {} to return all.
@@ -95,8 +117,7 @@ async def _wait_for_bs_login(page, context):
     await page.goto(BRIGHTSPACE_BASE)
     await page.wait_for_load_state("domcontentloaded", timeout=15000)
     try:
-        _cfg_path = Path(os.environ.get("APPDATA", Path.home())) / "BrightspaceAutomator" / "outline_config.json"
-        with open(str(_cfg_path)) as _f:
+        with open(_outline_config_path(), encoding="utf-8") as _f:
             _cfg = _json.load(_f)
         bs_user, bs_pass = _cfg.get("bs_username", ""), _cfg.get("bs_password", "")
     except Exception:
@@ -381,6 +402,11 @@ async def _cb_login(page, email: str, password: str):
     """Log into CourseBridge if the login form is visible."""
     if not await page.locator("input[type='email'], input[name='email']").count():
         return
+    if not email or not password:
+        raise RuntimeError(
+            "CourseBridge credentials are missing. Save the CourseBridge email "
+            "and password in Settings, then run the course outline step again."
+        )
     print("  Logging into CourseBridge...")
     await page.locator("input[type='email'], input[name='email']").first.fill(email)
     await page.locator("input[type='password']").first.fill(password)
@@ -772,8 +798,11 @@ async def _run_outline_steps(page, context, course_url, email, password, dry_run
 
 async def run(dry_run: bool = False, course_url: str = "", email: str = "", password: str = "", prompt_fn=input, rename_fn=None, context=None, page=None, history_fn=None):
     _course_url = course_url or COURSE_URL
-    _email      = email or COURSEBRIDGE_EMAIL
-    _password   = password or COURSEBRIDGE_PASSWORD
+    saved_email, saved_password = ("", "")
+    if not email or not password:
+        saved_email, saved_password = _load_saved_coursebridge_credentials()
+    _email      = email or saved_email or COURSEBRIDGE_EMAIL
+    _password   = password or saved_password or COURSEBRIDGE_PASSWORD
     if not _course_url:
         print("✗ Course CRN or URL is not set.")
         sys.exit(1)
