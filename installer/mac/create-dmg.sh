@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-VERSION=$(python3 -c "import re; print(re.search(r'VERSION\s*=\s*\"(.*?)\"', open('gui.py').read()).group(1))")
+VERSION=$(python3 -c "import re; print(re.search(r'VERSION\s*=\s*\"(.*?)\"', open('gui/constants.py').read()).group(1))")
 STAGE="/tmp/BrightspaceAutomator_staging/BrightspaceAutomator"
+rm -rf "/tmp/BrightspaceAutomator_staging"
 mkdir -p "$STAGE" dist
 
 rsync -av \
@@ -10,6 +11,7 @@ rsync -av \
   --exclude='courses.txt' --exclude='.version' --exclude='.playwright_installed' \
   --exclude='downloads' --exclude='installer' --exclude='.github' \
   --exclude='.claude' --exclude='bs_profile' \
+  --exclude='gui.py' --exclude='customtkinter' \
   . "$STAGE/"
 
 cp installer/mac/launch.command "$STAGE/"
