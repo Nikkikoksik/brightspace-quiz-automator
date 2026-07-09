@@ -13,7 +13,7 @@ jobs:
       - name: Extract version
         id: extract
         run: |
-          VERSION=$(python -c "import re; print(re.search(r'VERSION\s*=\s*\"(.*?)\"', open('gui.py').read()).group(1))")
+          VERSION=$(python -c "import re; print(re.search(r'VERSION\s*=\s*\"(.*?)\"', open('gui/constants.py').read()).group(1))")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
   build-windows:
