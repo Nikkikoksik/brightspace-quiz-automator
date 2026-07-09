@@ -8,6 +8,7 @@ import html as _htmllib
 from html.parser import HTMLParser
 import json
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -566,7 +567,12 @@ def extract_text_from_file(path: Path) -> str:
         suffix = path.suffix.lower()
     if suffix not in (".docx", ".doc"):
         raise ValueError(f"Unsupported outline file type for text extraction: {path.suffix}")
-    import mammoth
+    try:
+        import mammoth
+    except ImportError:
+        print("  Installing mammoth...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "mammoth"])
+        import mammoth
     with open(path, "rb") as f:
         return mammoth.extract_raw_text(f).value
 

@@ -28,6 +28,9 @@ BS_BASE = "https://learn.okanagancollege.ca"
 def _extract_ou(href: str) -> str | None:
     """Extract org-unit ID from /d2l/home/{ou} or full URL."""
     m = re.search(r'/d2l/(?:home|le/[^/]+)/(\d+)', href)
+    if m:
+        return m.group(1)
+    m = re.search(r'[?&]ou=(\d+)(?:&|$)', href)
     return m.group(1) if m else None
 
 
@@ -45,9 +48,22 @@ async def _resolve_ou(page, course_input: str) -> tuple[str | None, str | None]:
         print(f"  URL detected — OU: {ou}")
         return None, ou
 
-    # If it looks like a URL but has no course ID, give a clear error
+    # If it looks like a URL but has no course ID, load it in case login
+    # redirects to a course-specific URL or the OU is only present after auth.
     if course_input.startswith("http"):
-        print(f"✗ URL is missing a course ID — expected format: https://learn.okanagancollege.ca/d2l/home/12345")
+        try:
+            await page.goto(course_input, wait_until="domcontentloaded", timeout=20000)
+            ou = _extract_ou(page.url)
+            if ou:
+                print(f"  URL detected after navigation — OU: {ou}")
+                return None, ou
+        except Exception:
+            pass
+        print(
+            "✗ URL is missing a course ID — paste a course URL like "
+            "https://learn.okanagancollege.ca/d2l/home/12345, a Brightspace "
+            "tool URL with ?ou=12345, or enter the CRN."
+        )
         return None, None
 
     # CRN or full course code — find the staging shell

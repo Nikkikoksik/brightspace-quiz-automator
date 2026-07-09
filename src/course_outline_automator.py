@@ -372,10 +372,31 @@ async def _manual_download_fallback(page: Page, download_dir: Path, prompt_fn) -
     return await _save_download(dl, download_dir)
 
 
+async def _navigate_to_content_tab(page: Page, course_id: str) -> None:
+    """Open Brightspace Content so manual outline selection starts in the course."""
+    if not course_id:
+        return
+
+    print("  Navigating to Content tab...")
+    urls = [
+        f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}",
+        f"{BRIGHTSPACE_BASE}/d2l/le/content/{course_id}/Home",
+    ]
+    last_error = None
+    for url in urls:
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(2000)
+            return
+        except Exception as e:
+            last_error = e
+    print(f"  ⚠ Could not open Content automatically: {last_error}")
+
+
 async def find_and_download_outline(page: Page, course_id: str = "", prompt_fn=input) -> Path:
     """Find course outline via API, confirm with user, download it."""
     print("\nStep 1 — Finding course outline...")
-    await page.wait_for_timeout(2000)
+    await _navigate_to_content_tab(page, course_id)
     download_dir = _HERE / "downloads"
     download_dir.mkdir(exist_ok=True)
     matches = await _fetch_matching_topics(page, course_id)
