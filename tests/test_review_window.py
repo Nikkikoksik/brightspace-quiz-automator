@@ -4,7 +4,9 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtWidgets import QApplication
+
+QtWidgets = pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+QApplication = QtWidgets.QApplication
 
 from gui.gradebook_review_window import GradebookReviewWindow, UNCATEGORIZED
 
