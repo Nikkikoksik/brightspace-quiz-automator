@@ -77,6 +77,7 @@ class OutlinePanelMixin:
                     email=email, password=password,
                     prompt_fn=bridge.prompt,
                     history_fn=lambda name, url: self._append_history([(name, url)], "outline"),
+                    no_outline_fn=lambda url: q.put(("term_work", url)),
                 ))
             except Exception as e:
                 _sentry_capture(e)

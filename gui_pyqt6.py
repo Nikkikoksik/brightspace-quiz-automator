@@ -397,6 +397,28 @@ class App(
                 if tag == "term_work":
                     self._prepare_term_work_for_course(msg)
                     continue
+                # Gradebook worker→UI handoffs (workers have no Qt event loop,
+                # so QTimer.singleShot never fires there — queue instead).
+                if tag == "gb_fetched":
+                    if len(msg) == 3:
+                        data, text, structure = msg
+                    else:
+                        data, text = msg
+                        structure = None
+                    self._gb_on_fetched(data, text, structure)
+                    continue
+                if tag == "gb_load_board":
+                    self._gb_show_window(msg)
+                    continue
+                if tag == "gb_term_work_data":
+                    self._gb_load_term_work_data(msg)
+                    continue
+                if tag == "gb_offer_fallbacks":
+                    self._gb_offer_fallbacks()
+                    continue
+                if tag == "gb_file_text":
+                    self._gb_file_loaded(msg)
+                    continue
                 box = {
                     "quiz":    getattr(self, "_quiz_log",    None),
                     "assign":  getattr(self, "_assign_log",  None),
@@ -441,8 +463,9 @@ class App(
                     elif tag == "gradebook":
                         self._gb_fetch_btn.setEnabled(True)
                         self._gb_fetch_btn.setText("▶   Fetch Outline + Gradebook")
-                        self._gb_apply_btn.setEnabled(True)
-                        self._gb_apply_btn.setText("▶   Apply to Brightspace (step-by-step)")
+                        if hasattr(self, "_gb_direct_termwork_btn"):
+                            self._gb_direct_termwork_btn.setEnabled(True)
+                            self._gb_direct_termwork_btn.setText("No Outline → Term Work")
                 elif box:
                     self._log_append(box, msg)
         except queue.Empty:
