@@ -44,7 +44,9 @@ class App(
 ):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Brightspace Automator")
+        mode = os.environ.get("BRIGHTSPACE_AUTOMATOR_MODE", "").strip().lower()
+        title = "Brightspace Automator Development" if mode == "development" else "Brightspace Automator"
+        self.setWindowTitle(title)
         self.resize(960, 820)
         self.setMinimumSize(800, 600)
         self.setStyleSheet(f"background: {T['bg']}; color: {T['text']};")
@@ -59,6 +61,7 @@ class App(
         self._url_rows         = []
         self._assign_url_rows  = []
         self._tfix_url_rows    = []
+        self._current_course   = ""
         self._bridge           = _ThreadBridge(self)
 
         self._build_ui()
@@ -321,6 +324,67 @@ class App(
         container.layout().addWidget(row_widget)
         rows.append((row_widget, entry))
 
+    def _set_primary_row_text(
+        self,
+        container: QWidget,
+        rows: list,
+        value: str,
+        placeholder: str = "Paste course page URL hereâ€¦",
+    ):
+        value = value.strip()
+        if not value:
+            return
+        if not rows:
+            self._add_url_row(container, rows, placeholder=placeholder)
+        entry = rows[0][1]
+        if entry.text().strip() != value:
+            entry.setText(value)
+
+    def _sync_current_course(self, value: str):
+        value = value.strip()
+        if not value:
+            return
+        self._current_course = value
+
+        for attr in ("_staging_crn", "_outline_url", "_gb_course", "_cleaner_url"):
+            field = getattr(self, attr, None)
+            if field is not None and field.text().strip() != value:
+                field.setText(value)
+
+        if hasattr(self, "_quiz_url_container"):
+            self._set_primary_row_text(self._quiz_url_container, self._url_rows, value)
+        if hasattr(self, "_assign_url_container"):
+            self._set_primary_row_text(self._assign_url_container, self._assign_url_rows, value)
+
+    def _prepare_chained_phase(self, tag: str, course_value: str = ""):
+        panel = {
+            "quiz": "Quiz Automator",
+            "assign": "Assignment Automator",
+            "outline": "Course Outline",
+            "gradebook": "Gradebook",
+        }.get(tag)
+        if panel:
+            self._show_panel(panel)
+
+        box = {
+            "quiz": getattr(self, "_quiz_log", None),
+            "assign": getattr(self, "_assign_log", None),
+            "outline": getattr(self, "_outline_log", None),
+            "gradebook": getattr(self, "_gradebook_log", None),
+        }.get(tag)
+        if box is not None:
+            box.clear()
+            if course_value:
+                self._log_append(box, f"Course: {course_value}")
+            label = {
+                "quiz": "Starting Quiz Automator...",
+                "assign": "Starting Assignment Automator...",
+                "outline": "Starting Course Outline...",
+                "gradebook": "Opening Gradebook...",
+            }.get(tag)
+            if label:
+                self._log_append(box, label)
+
     # ── Log polling ───────────────────────────────────────────────────────────
 
     def _poll_log(self):
@@ -328,13 +392,32 @@ class App(
             while True:
                 tag, msg = self._log_queue.get_nowait()
                 if tag == "phase":
-                    panel = {
-                        "quiz":    "Quiz Automator",
-                        "assign":  "Assignment Automator",
-                        "outline": "Course Outline",
-                    }.get(msg)
-                    if panel:
-                        self._show_panel(panel)
+                    self._prepare_chained_phase(msg, self._current_course)
+                    continue
+                if tag == "term_work":
+                    self._prepare_term_work_for_course(msg)
+                    continue
+                # Gradebook worker→UI handoffs (workers have no Qt event loop,
+                # so QTimer.singleShot never fires there — queue instead).
+                if tag == "gb_fetched":
+                    if len(msg) == 3:
+                        data, text, structure = msg
+                    else:
+                        data, text = msg
+                        structure = None
+                    self._gb_on_fetched(data, text, structure)
+                    continue
+                if tag == "gb_load_board":
+                    self._gb_show_window(msg)
+                    continue
+                if tag == "gb_term_work_data":
+                    self._gb_load_term_work_data(msg)
+                    continue
+                if tag == "gb_offer_fallbacks":
+                    self._gb_offer_fallbacks()
+                    continue
+                if tag == "gb_file_text":
+                    self._gb_file_loaded(msg)
                     continue
                 box = {
                     "quiz":    getattr(self, "_quiz_log",    None),
@@ -380,8 +463,9 @@ class App(
                     elif tag == "gradebook":
                         self._gb_fetch_btn.setEnabled(True)
                         self._gb_fetch_btn.setText("▶   Fetch Outline + Gradebook")
-                        self._gb_apply_btn.setEnabled(True)
-                        self._gb_apply_btn.setText("▶   Apply to Brightspace (step-by-step)")
+                        if hasattr(self, "_gb_direct_termwork_btn"):
+                            self._gb_direct_termwork_btn.setEnabled(True)
+                            self._gb_direct_termwork_btn.setText("No Outline → Term Work")
                 elif box:
                     self._log_append(box, msg)
         except queue.Empty:

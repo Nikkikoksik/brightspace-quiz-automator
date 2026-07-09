@@ -4,7 +4,7 @@ from pathlib import Path
 VERSION      = "v0.8.6"
 _ROOT        = Path(__file__).parent.parent
 ICON_PATH    = str(_ROOT / "installer" / "assets" / "icon.ico")
-USERDATA_DIR = Path(os.environ["APPDATA"]) / "BrightspaceAutomator"
+USERDATA_DIR = Path(os.environ.get("APPDATA", Path.home() / ".local" / "share")) / "BrightspaceAutomator"
 USERDATA_DIR.mkdir(parents=True, exist_ok=True)
 
 _CHECK_SVG = USERDATA_DIR / "check.svg"

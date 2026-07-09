@@ -1,5 +1,7 @@
 @echo off
 cd /d "%~dp0"
+title Brightspace Automator Development
+set BRIGHTSPACE_AUTOMATOR_MODE=development
 
 :: DEV LAUNCHER — runs your LOCAL code with no auto-update.
 :: Use this while developing so your edits actually run.

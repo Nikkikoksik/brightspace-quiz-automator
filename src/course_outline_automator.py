@@ -31,6 +31,36 @@ COURSEBRIDGE_PASSWORD = ""
 OUTLINE_SEARCH_TERMS  = ["outline"]
 SYLLABUS_TOPIC_NAME   = "Course Syllabus"
 COURSE_URL            = ""
+EVALUATION_SCHEMA_TEMPLATE = """<!--
+Extract only the course evaluation / grading breakdown from the document.
+
+Find graded components that contribute to the final course grade. These may
+appear under headings such as Evaluation, Evaluation Schema, Assessment,
+Grading, Course Components, Percentage of Final Grade, Mark Distribution, or
+Grade Breakdown.
+
+Output one graded component per row. Do not include policies, schedules,
+learning outcomes, attendance rules, due dates, late penalties, or non-graded
+activities. Do not invent missing weights. If no evaluation schema is found,
+output only: NO EVALUATION SCHEMA FOUND
+-->
+
+<table>
+  <thead>
+    <tr>
+      <th>Component</th>
+      <th>Weight Percent</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>[Repeat: graded component name exactly as written]</td>
+      <td>[Repeat: final grade weight percent]</td>
+      <td>[Repeat: brief notes, if any]</td>
+    </tr>
+  </tbody>
+</table>"""
 
 _HERE           = Path(__file__).parent.parent
 BS_SESSION_FILE = str(_HERE / "session.json")
@@ -415,8 +445,37 @@ async def _cb_login(page, email: str, password: str):
     await page.wait_for_timeout(2000)
 
 
-async def _cb_upload_and_convert(page, file_path: Path):
-    """Upload file, set template to Course Syllabus, click Convert, wait for Copy HTML."""
+async def _cb_set_template(page, template_name: str, custom_template: str | None = None):
+    """Select CourseBridge template type and optionally fill custom HTML."""
+    trigger = page.locator("button[data-slot='select-trigger']").first
+    template_text = await trigger.inner_text()
+    if template_name not in template_text:
+        print(f"  Setting template: {template_name}...")
+        await trigger.click()
+        await page.locator(f"text={template_name}").last.click()
+        await page.wait_for_timeout(300)
+
+    if custom_template is not None:
+        print("  Filling custom evaluation template...")
+        textarea = page.locator(
+            "textarea[placeholder^='Paste your HTML format here'], "
+            "textarea[data-slot='textarea'], textarea.font-mono"
+        ).first
+        await textarea.wait_for(state="visible", timeout=10000)
+        await textarea.fill(custom_template)
+        await textarea.evaluate("""
+            el => {
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        """)
+
+
+async def _cb_upload_and_convert(
+    page, file_path: Path, template_name: str = "Course Syllabus",
+    custom_template: str | None = None,
+):
+    """Upload file, set template, click Convert, wait for Copy HTML."""
     print(f"  Uploading {file_path.name}...")
     # Try specific accept selector first; fall back to any file input if the
     # attribute value has changed on CourseBridge's side.
@@ -439,13 +498,7 @@ async def _cb_upload_and_convert(page, file_path: Path):
     if not uploaded:
         raise RuntimeError("Could not find the file upload input on CourseBridge — the page may have changed.")
     await page.wait_for_timeout(500)
-    trigger = page.locator("button[data-slot='select-trigger']").first
-    template_text = await trigger.inner_text()
-    if "Course Syllabus" not in template_text:
-        print(f"  ⚠ Template '{template_text.strip()}' — setting Course Syllabus...")
-        await trigger.click()
-        await page.locator("text=Course Syllabus").first.click()
-        await page.wait_for_timeout(300)
+    await _cb_set_template(page, template_name, custom_template)
     print("  Converting...")
     await page.locator("button:has-text('Convert Document')").first.click()
     print("  Waiting for conversion...")
@@ -527,6 +580,60 @@ async def convert_with_coursebridge(file_path: Path, email: str, password: str, 
 
 
 # ── Step 4 helpers ─────────────────────────────────────────────────────────────
+
+async def convert_evaluation_schema_with_coursebridge(
+    file_path: Path, email: str, password: str, context=None
+) -> str:
+    """Upload an outline and return only the evaluation-schema HTML table."""
+    print("\nStep 3 - CourseBridge evaluation extraction...")
+
+    if context is not None:
+        page = await context.new_page()
+        await context.grant_permissions(["clipboard-read", "clipboard-write"])
+        await page.goto(COURSEBRIDGE_URL)
+        await page.wait_for_load_state("domcontentloaded")
+        await _cb_login(page, email, password)
+        await page.wait_for_timeout(2000)
+        if page.url != COURSEBRIDGE_URL:
+            await page.goto(COURSEBRIDGE_URL)
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(1000)
+        await _cb_upload_and_convert(
+            page, file_path,
+            template_name="Custom Template",
+            custom_template=EVALUATION_SCHEMA_TEMPLATE,
+        )
+        html = await _cb_get_html(page)
+        print(f"  Evaluation HTML captured ({len(html)} chars)")
+        return html
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=False, slow_mo=60, args=["--start-maximized"])
+        own_ctx = await browser.new_context(
+            storage_state=CB_SESSION_FILE if os.path.exists(CB_SESSION_FILE) else None,
+            no_viewport=True,
+        )
+        await own_ctx.grant_permissions(["clipboard-read", "clipboard-write"])
+        page = await own_ctx.new_page()
+        await page.goto(COURSEBRIDGE_URL)
+        await page.wait_for_load_state("domcontentloaded")
+        await _cb_login(page, email, password)
+        await page.wait_for_timeout(2000)
+        if page.url != COURSEBRIDGE_URL:
+            await page.goto(COURSEBRIDGE_URL)
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(1000)
+        await _cb_upload_and_convert(
+            page, file_path,
+            template_name="Custom Template",
+            custom_template=EVALUATION_SCHEMA_TEMPLATE,
+        )
+        html = await _cb_get_html(page)
+        await own_ctx.storage_state(path=CB_SESSION_FILE)
+        await browser.close()
+    print(f"  Evaluation HTML captured ({len(html)} chars)")
+    return html
+
 
 async def _click_save_and_close(page) -> bool:
     """Find and click the 'Save and Close' d2l-button."""
@@ -754,7 +861,9 @@ async def _convert_outline(page, course_id: str, prompt_fn, email: str, password
 
 # ── Main orchestrator ──────────────────────────────────────────────────────────
 
-async def _run_outline_steps(page, context, course_url, email, password, dry_run, prompt_fn, rename_fn, pause_fn, history_fn=None):
+async def _run_outline_steps(page, context, course_url, email, password, dry_run,
+                             prompt_fn, rename_fn, pause_fn, history_fn=None,
+                             no_outline_fn=None):
     """Inner logic for run() — shared between standalone and staged invocations."""
     course_id = await _resolve_course_id(page, course_url)
     content_url = f"{BRIGHTSPACE_BASE}/d2l/le/lessons/{course_id}"
@@ -779,11 +888,17 @@ async def _run_outline_steps(page, context, course_url, email, password, dry_run
     html = await _convert_outline(page, course_id, prompt_fn, email, password, context=context, pause_fn=pause_fn)
     if html is None:
         print("\n✓ Course outline step skipped — no outline present.")
-        return
+        if no_outline_fn:
+            answer = prompt_fn(
+                "No course outline selected. Prepare a Term Work gradebook instead? (y/n)"
+            )
+            if str(answer).strip().lower() in ("y", "yes"):
+                no_outline_fn(course_url)
+        return "skipped"
 
     if dry_run:
         print(f"\n✓ Dry run complete — HTML captured ({len(html):,} chars)")
-        return
+        return "dry_run"
 
     await page.bring_to_front()
     await page.goto(content_url)
@@ -794,9 +909,12 @@ async def _run_outline_steps(page, context, course_url, email, password, dry_run
     if rename_fn:
         from staging_automator import maybe_rename_staged
         await maybe_rename_staged(page, rename_fn)
+    return "completed"
 
 
-async def run(dry_run: bool = False, course_url: str = "", email: str = "", password: str = "", prompt_fn=input, rename_fn=None, context=None, page=None, history_fn=None):
+async def run(dry_run: bool = False, course_url: str = "", email: str = "",
+              password: str = "", prompt_fn=input, rename_fn=None, context=None,
+              page=None, history_fn=None, no_outline_fn=None):
     _course_url = course_url or COURSE_URL
     saved_email, saved_password = ("", "")
     if not email or not password:
@@ -809,8 +927,11 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
 
     if context is not None:
         # Called from staging — reuse the shared browser context, leave browser open
-        await _run_outline_steps(page, context, _course_url, _email, _password, dry_run, prompt_fn, rename_fn, pause_fn=prompt_fn, history_fn=history_fn)
-        return
+        return await _run_outline_steps(
+            page, context, _course_url, _email, _password, dry_run,
+            prompt_fn, rename_fn, pause_fn=prompt_fn, history_fn=history_fn,
+            no_outline_fn=no_outline_fn,
+        )
 
     # Standalone — create own browser, close when done
     async with async_playwright() as p:
@@ -821,12 +942,17 @@ async def run(dry_run: bool = False, course_url: str = "", email: str = "", pass
         )
         own_page = await own_ctx.new_page()
         await _wait_for_bs_login(own_page, own_ctx)
-        await _run_outline_steps(own_page, own_ctx, _course_url, _email, _password, dry_run, prompt_fn, rename_fn, pause_fn=prompt_fn, history_fn=history_fn)
+        status = await _run_outline_steps(
+            own_page, own_ctx, _course_url, _email, _password, dry_run,
+            prompt_fn, rename_fn, pause_fn=prompt_fn, history_fn=history_fn,
+            no_outline_fn=no_outline_fn,
+        )
         # Stay alive until user closes the browser manually
         try:
             await own_page.wait_for_event("close", timeout=0)
         except Exception:
             pass
+        return status
 
 
 
