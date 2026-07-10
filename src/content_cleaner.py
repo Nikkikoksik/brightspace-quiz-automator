@@ -23,7 +23,7 @@ else:
     _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
 
 from browser import _BS_PROFILE, _load_bs_credentials, _wait_for_login
-from navigation import get_course_name
+from navigation import get_course_name, set_per_page_200, _find_menu_item
 
 SKIP_MODULES = {
     "How to Use This Blueprint",
@@ -518,6 +518,275 @@ async def process_topic(
     return changes, warnings
 
 
+async def get_all_assignments(page: Page, course_id: str) -> list[dict]:
+    """Fetch all assignment (dropbox) folders with their instructions HTML via API."""
+    for api_ver in ["1.70", "1.67", "1.68", "1.69", "1.60", "1.50"]:
+        result = await page.evaluate(f"""
+            async () => {{
+                try {{
+                    const r = await fetch('{BRIGHTSPACE_BASE}/d2l/api/le/{api_ver}/{course_id}/dropbox/folders/');
+                    if (!r.ok) return {{ status: r.status }};
+                    return {{ folders: await r.json() }};
+                }} catch(e) {{ return {{ error: e.message }}; }}
+            }}
+        """)
+        folders = (result or {}).get("folders")
+        if folders is not None:
+            print(f"  ✓ Dropbox API v{api_ver}")
+            return [
+                {
+                    "Id":   str(f.get("Id", "")),
+                    "Name": f.get("Name", ""),
+                    "Html": (f.get("CustomInstructions") or {}).get("Html")
+                            or (f.get("CustomInstructions") or {}).get("Text", ""),
+                }
+                for f in folders
+            ]
+        detail = result.get("status") or result.get("error") or "no response"
+        print(f"  Dropbox API v{api_ver}: {detail}")
+    print("  ✗ Could not fetch assignments — skipping assignment scan")
+    return []
+
+
+_FIND_SAVE_AND_CLOSE_JS = """
+    () => {
+        function walk(root) {
+            for (const el of root.querySelectorAll('button, d2l-button')) {
+                const text = (el.textContent || '').trim();
+                if (text === 'Save and Close') {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
+            }
+            return null;
+        }
+        return walk(document);
+    }
+"""
+
+
+_SET_TINYMCE_JS = """
+    (html) => {
+        try {
+            if (typeof tinymce === 'undefined') return 'tinymce not found';
+            const editors = tinymce.editors || tinymce.get() || [];
+            for (const ed of editors) {
+                const content = ed.getContent() || '';
+                if (/moodle/i.test(content)) {
+                    ed.setContent(html);
+                    ed.fire('change');
+                    return 'ok';
+                }
+            }
+            return 'no editor with moodle content';
+        } catch(e) { return 'error: ' + e.message; }
+    }
+"""
+
+
+_FIND_HTMLEDITOR_JS = """
+    () => {
+        function find(root) {
+            for (const sel of ['d2l-htmleditor', '.tox-edit-area__iframe', '.d2l-htmleditor-container']) {
+                for (const el of root.querySelectorAll(sel)) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0) return { x: r.left + r.width/2, y: r.top + Math.min(r.height/2, 100) };
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+            }
+            return null;
+        }
+        return find(document);
+    }
+"""
+
+_EDITOR_DIAG_JS = """
+    () => {
+        const found = [];
+        function walk(root) {
+            for (const sel of ['d2l-htmleditor', 'd2l-activity-assignment-editor',
+                               '.tox-edit-area__iframe', 'iframe', 'textarea']) {
+                for (const el of root.querySelectorAll(sel)) {
+                    const r = el.getBoundingClientRect();
+                    found.push(sel + (r.width > 0 ? '' : ' (hidden)'));
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) walk(el.shadowRoot);
+            }
+        }
+        walk(document);
+        return [...new Set(found)].join(', ') || 'no editor elements found';
+    }
+"""
+
+
+async def _try_set_all_frames(edit_page, new_html: str) -> str:
+    results = []
+    for frame in edit_page.frames:
+        try:
+            result = await frame.evaluate(_SET_TINYMCE_JS, new_html)
+        except Exception as e:
+            result = f"frame error: {e}"
+        if result == "ok":
+            return "ok"
+        results.append(result)
+    found = [r for r in results if r != "tinymce not found"]
+    return found[0] if found else "tinymce not found"
+
+
+async def _set_editor_html(edit_page, new_html: str) -> str:
+    """Set instructions HTML on the TinyMCE editor containing 'moodle'.
+    The activity editor lazy-loads TinyMCE, so click the instructions
+    area first to force initialization, then poll all frames."""
+    result = await _try_set_all_frames(edit_page, new_html)
+    if result == "ok":
+        return "ok"
+
+    try:
+        coords = await edit_page.evaluate(_FIND_HTMLEDITOR_JS)
+    except Exception:
+        coords = None
+    if coords:
+        await edit_page.mouse.click(coords["x"], coords["y"])
+
+    for _ in range(10):
+        await edit_page.wait_for_timeout(1000)
+        result = await _try_set_all_frames(edit_page, new_html)
+        if result == "ok":
+            return "ok"
+
+    try:
+        diag = await edit_page.evaluate(_EDITOR_DIAG_JS)
+    except Exception as e:
+        diag = f"diag failed: {e}"
+    return f"{result} — page has: {diag}"
+
+
+async def _open_assignment_edit_admin(page: Page, name: str) -> None:
+    """Open an assignment editor from the ADMIN list page (folders_manage.d2l).
+    Rows there use d2l-dropdown-context-menu, not button[aria-haspopup]."""
+    coords = None
+    for _ in range(5):
+        coords = await page.evaluate(
+            """(name) => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('d2l-dropdown-context-menu')) {
+                        const label = el.getAttribute('aria-label') || el.getAttribute('text') || '';
+                        if (label.includes('Actions for') && label.includes(name)) {
+                            el.scrollIntoView({block: 'center', behavior: 'instant'});
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }""",
+            name,
+        )
+        if coords:
+            break
+        await page.evaluate("window.scrollBy(0, 800)")
+        await page.wait_for_timeout(400)
+    if coords is None:
+        raise Exception(f"Actions menu for '{name}' not found on admin list")
+    await page.wait_for_timeout(300)
+    await page.mouse.click(coords["x"], coords["y"])
+    await page.wait_for_timeout(500)
+    edit_coords = await _find_menu_item(page, "Edit Assignment") or await _find_menu_item(page, "Edit Folder")
+    if edit_coords is None:
+        raise Exception(f"Edit menu item for '{name}' not found")
+    await page.mouse.click(edit_coords["x"], edit_coords["y"])
+    await page.wait_for_load_state("domcontentloaded")
+    await page.wait_for_timeout(800)
+
+
+async def process_assignment(page: Page, course_id: str, folder: dict, dry_run: bool) -> tuple[list[str], list[str]]:
+    """Replace Moodle references in one assignment's name and instructions."""
+    name = folder["Name"]
+    html = folder["Html"] or ""
+
+    new_name, name_changed = replace_moodle_in_title(name)
+    new_html, changes, warnings = replace_moodle(html, name)
+
+    if not changes and not warnings and not name_changed:
+        return [], []
+
+    print(f"\n  [Assignment] {name[:70]}")
+    for line in changes:
+        print(line)
+    for line in warnings:
+        print(line)
+    if name_changed:
+        print(f"  [title] '{name}' → '{new_name}'")
+        changes.append(f"  [title] '{name}' → '{new_name}'")
+
+    if dry_run:
+        print("    (dry run — not saved)")
+        return changes, warnings
+
+    list_url = f"{BRIGHTSPACE_BASE}/d2l/lms/dropbox/admin/folders_manage.d2l?ou={course_id}"
+    # Retry once: right after Save and Close, D2L's redirect back to the list can
+    # still be in flight, which aborts the first goto (net::ERR_ABORTED).
+    for attempt in range(2):
+        try:
+            await page.goto(list_url, wait_until="domcontentloaded")
+            break
+        except Exception:
+            if attempt == 1:
+                print("    ✗ Could not load assignments list — edit manually")
+                return [], warnings
+            await page.wait_for_timeout(2500)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(1000)
+    await set_per_page_200(page)
+    try:
+        await _open_assignment_edit_admin(page, name)
+    except Exception as e:
+        print(f"    ✗ Could not open editor: {e} — edit manually")
+        return [], warnings
+    await page.wait_for_timeout(2000)
+
+    if changes and html:
+        result = await _set_editor_html(page, new_html)
+        if result != "ok":
+            print(f"    ✗ Could not set instructions: {result} — edit manually")
+            return [], warnings
+
+    if name_changed:
+        ok = await page.evaluate(_FIND_AND_SET_TITLE_JS, [name, new_name])
+        if ok:
+            print("    ✓ Title updated")
+        else:
+            print("    ✗ Title input not found — rename manually")
+
+    await page.wait_for_timeout(500)
+    saved = await page.evaluate(_FIND_SAVE_AND_CLOSE_JS)
+    if not saved:
+        print("    ✗ Save and Close not found — save manually")
+        return [], warnings
+    await page.mouse.click(saved["x"], saved["y"])
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(1000)
+    print("    ✓ Saved")
+    return changes, warnings
+
+
 async def pre_scan_topics(page: Page, topics: list[dict]) -> list[dict]:
     """Batch-fetch topic content URLs and return only those containing 'moodle'."""
     to_scan = [(t["TopicId"], t.get("Url", "")) for t in topics if t.get("Url")]
@@ -680,6 +949,28 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
             all_changes.extend(changes)
             all_warnings.extend(warnings)
 
+        print(f"\n{'─' * 50}")
+        print("Scanning assignment descriptions...")
+        assignments = await get_all_assignments(page, course_id)
+        print(f"{len(assignments)} assignment(s) found")
+        for folder in assignments:
+            if page.is_closed():
+                print("\n  [RECOVERY] Page closed — opening new page...")
+                try:
+                    page = await context.new_page()
+                except Exception as re_err:
+                    print(f"  [RECOVERY] Failed: {re_err}")
+                    break
+            try:
+                changes, warnings = await process_assignment(page, course_id, folder, dry_run)
+            except Exception as e:
+                print(f"    ✗ Skipped '{folder['Name'][:50]}': {e}")
+                continue
+            if changes or warnings:
+                modified_topics.append((f"[Assignment] {folder['Name']}", changes))
+            all_changes.extend(changes)
+            all_warnings.extend(warnings)
+
         verb = "would be modified" if dry_run else "modified"
         print(f"\n{'─' * 50}")
         print(f"✓  Done — {len(modified_topics)} topic(s) {verb}")
@@ -696,4 +987,11 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
             for w in all_warnings:
                 print(f"  {w.strip()}")
 
+        # Let the last save request settle before tearing the browser down —
+        # closing immediately can abort the final Save and Close mid-flight.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2000)
         await context.close()
