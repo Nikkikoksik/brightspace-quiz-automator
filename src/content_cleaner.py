@@ -1,9 +1,11 @@
 import asyncio
+import base64
 import contextlib
 import io
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 from playwright.async_api import async_playwright, Page
@@ -690,6 +692,50 @@ async def _set_editor_html(edit_page, new_html: str) -> str:
     return f"{result} — page has: {diag}"
 
 
+# Direct activity-editor URLs: /d2l/le/activities/edit/<token> where token is
+# B64(B64("6606_<code>_<objectId>") + "." + courseId), padding stripped.
+# Verified live for dropbox (2000) and discussion topics (3000). optOutUrl=
+# must be present or the editor renders "Opt Out Url is missing".
+_EDIT_TOKEN_CODES = {"dropbox": "2000", "topic": "3000"}
+
+
+def _activity_edit_url(course_id: str, cft: str, obj_id: str) -> str:
+    def b64(s: str) -> str:
+        return base64.b64encode(s.encode()).decode().rstrip("=")
+    token = b64(f"{b64(f'6606_{_EDIT_TOKEN_CODES[cft]}_{obj_id}')}.{course_id}")
+    return (
+        f"{BRIGHTSPACE_BASE}/d2l/le/activities/edit/{token}"
+        f"?cft={cft}&returnUrl=%2Fd2l%2Fhome%2F{course_id}&optOutUrl="
+    )
+
+
+async def _wait_editor_ready(page: Page, timeout_s: int = 10) -> bool:
+    """Poll until the activity editor's TinyMCE is initialized."""
+    for _ in range(timeout_s * 2):
+        try:
+            ok = await page.evaluate(
+                "() => typeof tinymce !== 'undefined' && (tinymce.editors || tinymce.get() || []).length > 0"
+            )
+        except Exception:
+            ok = False
+        if ok:
+            return True
+        await page.wait_for_timeout(500)
+    return False
+
+
+async def _set_title_with_retry(page: Page, old: str, new: str, tries: int = 5) -> bool:
+    for i in range(tries):
+        try:
+            if await page.evaluate(_FIND_AND_SET_TITLE_JS, [old, new]):
+                return True
+        except Exception:
+            pass
+        if i < tries - 1:
+            await page.wait_for_timeout(800)
+    return False
+
+
 async def _open_assignment_edit_admin(page: Page, name: str) -> None:
     """Open an assignment editor from the ADMIN list page (folders_manage.d2l).
     Rows there use d2l-dropdown-context-menu, not button[aria-haspopup]."""
@@ -756,30 +802,40 @@ async def process_assignment(page: Page, course_id: str, folder: dict, dry_run: 
         print("    (dry run — not saved)")
         return changes, warnings
 
-    list_url = f"{BRIGHTSPACE_BASE}/d2l/lms/dropbox/admin/folders_manage.d2l?ou={course_id}"
-    # Retry once: right after Save and Close, D2L's redirect back to the list can
-    # still be in flight, which aborts the first goto (net::ERR_ABORTED).
-    for attempt in range(2):
-        try:
-            await page.goto(list_url, wait_until="domcontentloaded")
-            break
-        except Exception:
-            if attempt == 1:
-                print("    ✗ Could not load assignments list — edit manually")
-                return [], warnings
-            await page.wait_for_timeout(2500)
+    # Fast path: navigate straight to the activity editor by constructed URL.
+    opened = False
     try:
-        await page.wait_for_load_state("networkidle", timeout=10000)
+        await page.goto(_activity_edit_url(course_id, "dropbox", folder["Id"]),
+                        wait_until="domcontentloaded")
+        opened = await _wait_editor_ready(page)
     except Exception:
-        pass
-    await page.wait_for_timeout(1000)
-    await set_per_page_200(page)
-    try:
-        await _open_assignment_edit_admin(page, name)
-    except Exception as e:
-        print(f"    ✗ Could not open editor: {e} — edit manually")
-        return [], warnings
-    await page.wait_for_timeout(2000)
+        opened = False
+
+    if not opened:
+        # Fallback: admin list → Actions menu → Edit Assignment.
+        print("    (direct editor URL failed — falling back to list navigation)")
+        list_url = f"{BRIGHTSPACE_BASE}/d2l/lms/dropbox/admin/folders_manage.d2l?ou={course_id}"
+        for attempt in range(2):
+            try:
+                await page.goto(list_url, wait_until="domcontentloaded")
+                break
+            except Exception:
+                if attempt == 1:
+                    print("    ✗ Could not load assignments list — edit manually")
+                    return [], warnings
+                await page.wait_for_timeout(2500)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)
+        await set_per_page_200(page)
+        try:
+            await _open_assignment_edit_admin(page, name)
+        except Exception as e:
+            print(f"    ✗ Could not open editor: {e} — edit manually")
+            return [], warnings
+        await page.wait_for_timeout(2000)
 
     if changes and html:
         result = await _set_editor_html(page, new_html)
@@ -791,11 +847,8 @@ async def process_assignment(page: Page, course_id: str, folder: dict, dry_run: 
             return [], warnings
 
     if name_changed:
-        ok = await page.evaluate(_FIND_AND_SET_TITLE_JS, [name, new_name])
-        if ok:
-            print("    ✓ Title updated")
-        else:
-            print("    ✗ Title input not found — rename manually")
+        ok = await _set_title_with_retry(page, name, new_name)
+        print("    ✓ Title updated" if ok else "    ✗ Title input not found — rename manually")
 
     await page.wait_for_timeout(500)
     saved = await page.evaluate(_FIND_SAVE_AND_CLOSE_JS)
@@ -916,7 +969,7 @@ async def process_quiz(page: Page, course_id: str, quiz: dict, dry_run: bool) ->
             return [], warnings
 
     if name_changed:
-        ok = await page.evaluate(_FIND_AND_SET_TITLE_JS, [name, new_name])
+        ok = await _set_title_with_retry(page, name, new_name)
         print("    ✓ Title updated" if ok else "    ✗ Title input not found — rename manually")
 
     await page.wait_for_timeout(500)
@@ -955,6 +1008,7 @@ async def get_all_discussions(page: Page, course_id: str) -> list[dict]:
             desc = f.get("Description") or {}
             items.append({
                 "Kind": "Forum",
+                "Id":   str(f.get("ForumId", "")),
                 "Name": f.get("Name", ""),
                 "Html": desc.get("Html") or desc.get("Text", "") or "",
             })
@@ -971,6 +1025,7 @@ async def get_all_discussions(page: Page, course_id: str) -> list[dict]:
                 tdesc = t.get("Description") or {}
                 items.append({
                     "Kind": "Topic",
+                    "Id":   str(t.get("TopicId", "")),
                     "Name": t.get("Name", ""),
                     "Html": tdesc.get("Html") or tdesc.get("Text", "") or "",
                 })
@@ -1028,27 +1083,40 @@ async def process_discussion(page: Page, course_id: str, item: dict, dry_run: bo
         print("    (dry run — not saved)")
         return changes, warnings
 
-    list_url = f"{BRIGHTSPACE_BASE}/d2l/le/{course_id}/discussions/List"
-    for attempt in range(2):
+    # Fast path (topics only): direct activity-editor URL.
+    opened = False
+    if kind == "Topic" and item.get("Id"):
         try:
-            await page.goto(list_url, wait_until="domcontentloaded")
-            break
+            await page.goto(_activity_edit_url(course_id, "topic", item["Id"]),
+                            wait_until="domcontentloaded")
+            opened = await _wait_editor_ready(page)
         except Exception:
-            if attempt == 1:
-                print("    ✗ Could not load discussions list — edit manually")
-                return [], warnings
-            await page.wait_for_timeout(2500)
-    try:
-        await page.wait_for_load_state("networkidle", timeout=10000)
-    except Exception:
-        pass
-    await page.wait_for_timeout(1000)
-    try:
-        await _open_discussion_edit(page, name, kind)
-    except Exception as e:
-        print(f"    ✗ Could not open editor: {e} — edit manually")
-        return [], warnings
-    await page.wait_for_timeout(2000)
+            opened = False
+
+    if not opened:
+        if kind == "Topic":
+            print("    (direct editor URL failed — falling back to list navigation)")
+        list_url = f"{BRIGHTSPACE_BASE}/d2l/le/{course_id}/discussions/List"
+        for attempt in range(2):
+            try:
+                await page.goto(list_url, wait_until="domcontentloaded")
+                break
+            except Exception:
+                if attempt == 1:
+                    print("    ✗ Could not load discussions list — edit manually")
+                    return [], warnings
+                await page.wait_for_timeout(2500)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)
+        try:
+            await _open_discussion_edit(page, name, kind)
+        except Exception as e:
+            print(f"    ✗ Could not open editor: {e} — edit manually")
+            return [], warnings
+        await page.wait_for_timeout(2000)
 
     if changes and html:
         result = await _set_editor_html(page, new_html)
@@ -1060,7 +1128,7 @@ async def process_discussion(page: Page, course_id: str, item: dict, dry_run: bo
             return [], warnings
 
     if name_changed:
-        ok = await page.evaluate(_FIND_AND_SET_TITLE_JS, [name, new_name])
+        ok = await _set_title_with_retry(page, name, new_name)
         print("    ✓ Title updated" if ok else "    ✗ Title input not found — rename manually")
 
     await page.wait_for_timeout(500)
@@ -1211,11 +1279,19 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
     if dry_run:
         print("⚠  DRY RUN — no changes will be saved\n")
 
+    run_start = time.monotonic()
+    phase_start = run_start
+
+    def _phase_done(label: str):
+        nonlocal phase_start
+        now = time.monotonic()
+        print(f"  ⏱  {label}: {now - phase_start:.0f}s  (total {now - run_start:.0f}s)")
+        phase_start = now
+
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
             headless=False,
-            slow_mo=60,
             args=["--start-maximized"],
             no_viewport=True,
         )
@@ -1314,6 +1390,7 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
                 modified_topics.append((topic["Title"], changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
+        _phase_done("Content topics")
 
         print(f"\n{'─' * 50}")
         print("Scanning assignment descriptions...")
@@ -1327,6 +1404,7 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
                 modified_topics.append((f"[Assignment] {folder['Name']}", changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
+        _phase_done("Assignments")
 
         print(f"\n{'─' * 50}")
         print("Scanning quiz descriptions...")
@@ -1340,6 +1418,7 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
                 modified_topics.append((f"[Quiz] {quiz['Name']}", changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
+        _phase_done("Quizzes")
 
         print(f"\n{'─' * 50}")
         print("Scanning discussion descriptions...")
@@ -1353,10 +1432,12 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
                 modified_topics.append((f"[{item['Kind']}] {item['Name']}", changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
+        _phase_done("Discussions")
 
         verb = "would be modified" if dry_run else "modified"
         print(f"\n{'─' * 50}")
         print(f"✓  Done — {len(modified_topics)} topic(s) {verb}")
+        print(f"⏱  Total run time: {time.monotonic() - run_start:.0f}s")
 
         if modified_topics:
             print(f"\nChanged topics:")
