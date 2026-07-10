@@ -1,9 +1,11 @@
 import asyncio
+import base64
 import contextlib
 import io
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 from playwright.async_api import async_playwright, Page
@@ -23,7 +25,13 @@ else:
     _USERDATA_DIR = Path.home() / ".local" / "share" / "BrightspaceAutomator"
 
 from browser import _BS_PROFILE, _load_bs_credentials, _wait_for_login
-from navigation import get_course_name
+from navigation import (
+    get_course_name,
+    set_per_page_200,
+    _find_menu_item,
+    _find_action_button,
+    open_quiz_edit,
+)
 
 SKIP_MODULES = {
     "How to Use This Blueprint",
@@ -320,13 +328,29 @@ def replace_moodle_in_title(title: str) -> tuple[str, bool]:
 
 _FIND_AND_SET_TITLE_JS = """
     ([currentTitle, newTitle]) => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        function fire(el) {
+            el.dispatchEvent(new Event('input',  {bubbles: true, composed: true}));
+            el.dispatchEvent(new Event('change', {bubbles: true, composed: true}));
+        }
         function findAndSet(root) {
+            // Lit-based activity editors (assignments/quizzes/discussions): the
+            // title lives in a d2l-input-text — set the HOST value property and
+            // fire composed events, or the editor state never sees the change.
+            for (const host of root.querySelectorAll('d2l-input-text')) {
+                const inner = host.shadowRoot && host.shadowRoot.querySelector('input');
+                const val = (inner && inner.value) || host.value || '';
+                if (val === currentTitle) {
+                    host.value = newTitle;
+                    if (inner) { setter.call(inner, newTitle); fire(inner); }
+                    fire(host);
+                    return true;
+                }
+            }
             for (const el of root.querySelectorAll('input')) {
                 if (el.value === currentTitle) {
-                    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
                     setter.call(el, newTitle);
-                    el.dispatchEvent(new Event('input', {bubbles: true}));
-                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                    fire(el);
                     return true;
                 }
             }
@@ -518,6 +542,610 @@ async def process_topic(
     return changes, warnings
 
 
+async def get_all_assignments(page: Page, course_id: str) -> list[dict]:
+    """Fetch all assignment (dropbox) folders with their instructions HTML via API."""
+    for api_ver in ["1.70", "1.67", "1.68", "1.69", "1.60", "1.50"]:
+        result = await page.evaluate(f"""
+            async () => {{
+                try {{
+                    const r = await fetch('{BRIGHTSPACE_BASE}/d2l/api/le/{api_ver}/{course_id}/dropbox/folders/');
+                    if (!r.ok) return {{ status: r.status }};
+                    return {{ folders: await r.json() }};
+                }} catch(e) {{ return {{ error: e.message }}; }}
+            }}
+        """)
+        folders = (result or {}).get("folders")
+        if folders is not None:
+            print(f"  ✓ Dropbox API v{api_ver}")
+            return [
+                {
+                    "Id":   str(f.get("Id", "")),
+                    "Name": f.get("Name", ""),
+                    "Html": (f.get("CustomInstructions") or {}).get("Html")
+                            or (f.get("CustomInstructions") or {}).get("Text", ""),
+                }
+                for f in folders
+            ]
+        detail = result.get("status") or result.get("error") or "no response"
+        print(f"  Dropbox API v{api_ver}: {detail}")
+    print("  ✗ Could not fetch assignments — skipping assignment scan")
+    return []
+
+
+_FIND_SAVE_AND_CLOSE_JS = """
+    () => {
+        function walk(root) {
+            for (const el of root.querySelectorAll('button, d2l-button')) {
+                const text = (el.textContent || '').trim();
+                if (text === 'Save and Close') {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) { const c = walk(el.shadowRoot); if (c) return c; }
+            }
+            return null;
+        }
+        return walk(document);
+    }
+"""
+
+
+_SET_TINYMCE_JS = """
+    (html) => {
+        try {
+            if (typeof tinymce === 'undefined') return 'tinymce not found';
+            const editors = tinymce.editors || tinymce.get() || [];
+            for (const ed of editors) {
+                const content = ed.getContent() || '';
+                if (/moodle/i.test(content)) {
+                    ed.setContent(html);
+                    ed.fire('change');
+                    return 'ok';
+                }
+            }
+            return 'no editor with moodle content';
+        } catch(e) { return 'error: ' + e.message; }
+    }
+"""
+
+
+_FIND_HTMLEDITOR_JS = """
+    () => {
+        function find(root) {
+            for (const sel of ['d2l-htmleditor', '.tox-edit-area__iframe', '.d2l-htmleditor-container']) {
+                for (const el of root.querySelectorAll(sel)) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0) return { x: r.left + r.width/2, y: r.top + Math.min(r.height/2, 100) };
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+            }
+            return null;
+        }
+        return find(document);
+    }
+"""
+
+_EDITOR_DIAG_JS = """
+    () => {
+        const found = [];
+        function walk(root) {
+            for (const sel of ['d2l-htmleditor', 'd2l-activity-assignment-editor',
+                               '.tox-edit-area__iframe', 'iframe', 'textarea']) {
+                for (const el of root.querySelectorAll(sel)) {
+                    const r = el.getBoundingClientRect();
+                    found.push(sel + (r.width > 0 ? '' : ' (hidden)'));
+                }
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) walk(el.shadowRoot);
+            }
+        }
+        walk(document);
+        return [...new Set(found)].join(', ') || 'no editor elements found';
+    }
+"""
+
+
+async def _try_set_all_frames(edit_page, new_html: str) -> str:
+    results = []
+    for frame in edit_page.frames:
+        try:
+            result = await frame.evaluate(_SET_TINYMCE_JS, new_html)
+        except Exception as e:
+            result = f"frame error: {e}"
+        if result == "ok":
+            return "ok"
+        results.append(result)
+    found = [r for r in results if r != "tinymce not found"]
+    return found[0] if found else "tinymce not found"
+
+
+async def _set_editor_html(edit_page, new_html: str) -> str:
+    """Set instructions HTML on the TinyMCE editor containing 'moodle'.
+    The activity editor lazy-loads TinyMCE, so click the instructions
+    area first to force initialization, then poll all frames."""
+    result = await _try_set_all_frames(edit_page, new_html)
+    if result == "ok":
+        return "ok"
+
+    try:
+        coords = await edit_page.evaluate(_FIND_HTMLEDITOR_JS)
+    except Exception:
+        coords = None
+    if coords:
+        await edit_page.mouse.click(coords["x"], coords["y"])
+
+    for _ in range(10):
+        await edit_page.wait_for_timeout(1000)
+        result = await _try_set_all_frames(edit_page, new_html)
+        if result == "ok":
+            return "ok"
+
+    try:
+        diag = await edit_page.evaluate(_EDITOR_DIAG_JS)
+    except Exception as e:
+        diag = f"diag failed: {e}"
+    return f"{result} — page has: {diag}"
+
+
+# Direct activity-editor URLs: /d2l/le/activities/edit/<token> where token is
+# B64(B64("6606_<code>_<objectId>") + "." + courseId), padding stripped.
+# Verified live for dropbox (2000) and discussion topics (3000). optOutUrl=
+# must be present or the editor renders "Opt Out Url is missing".
+_EDIT_TOKEN_CODES = {"dropbox": "2000", "topic": "3000"}
+
+
+def _activity_edit_url(course_id: str, cft: str, obj_id: str) -> str:
+    def b64(s: str) -> str:
+        return base64.b64encode(s.encode()).decode().rstrip("=")
+    token = b64(f"{b64(f'6606_{_EDIT_TOKEN_CODES[cft]}_{obj_id}')}.{course_id}")
+    return (
+        f"{BRIGHTSPACE_BASE}/d2l/le/activities/edit/{token}"
+        f"?cft={cft}&returnUrl=%2Fd2l%2Fhome%2F{course_id}&optOutUrl="
+    )
+
+
+async def _wait_editor_ready(page: Page, timeout_s: int = 10) -> bool:
+    """Poll until the activity editor's TinyMCE is initialized."""
+    for _ in range(timeout_s * 2):
+        try:
+            ok = await page.evaluate(
+                "() => typeof tinymce !== 'undefined' && (tinymce.editors || tinymce.get() || []).length > 0"
+            )
+        except Exception:
+            ok = False
+        if ok:
+            return True
+        await page.wait_for_timeout(500)
+    return False
+
+
+async def _set_title_with_retry(page: Page, old: str, new: str, tries: int = 5) -> bool:
+    for i in range(tries):
+        try:
+            if await page.evaluate(_FIND_AND_SET_TITLE_JS, [old, new]):
+                return True
+        except Exception:
+            pass
+        if i < tries - 1:
+            await page.wait_for_timeout(800)
+    return False
+
+
+async def _open_assignment_edit_admin(page: Page, name: str) -> None:
+    """Open an assignment editor from the ADMIN list page (folders_manage.d2l).
+    Rows there use d2l-dropdown-context-menu, not button[aria-haspopup]."""
+    coords = None
+    for _ in range(5):
+        coords = await page.evaluate(
+            """(name) => {
+                function find(root) {
+                    for (const el of root.querySelectorAll('d2l-dropdown-context-menu')) {
+                        const label = el.getAttribute('aria-label') || el.getAttribute('text') || '';
+                        if (label.includes('Actions for') && label.includes(name)) {
+                            el.scrollIntoView({block: 'center', behavior: 'instant'});
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0) return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                        }
+                    }
+                    for (const el of root.querySelectorAll('*')) {
+                        if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+                    }
+                    return null;
+                }
+                return find(document);
+            }""",
+            name,
+        )
+        if coords:
+            break
+        await page.evaluate("window.scrollBy(0, 800)")
+        await page.wait_for_timeout(400)
+    if coords is None:
+        raise Exception(f"Actions menu for '{name}' not found on admin list")
+    await page.wait_for_timeout(300)
+    await page.mouse.click(coords["x"], coords["y"])
+    await page.wait_for_timeout(500)
+    edit_coords = await _find_menu_item(page, "Edit Assignment") or await _find_menu_item(page, "Edit Folder")
+    if edit_coords is None:
+        raise Exception(f"Edit menu item for '{name}' not found")
+    await page.mouse.click(edit_coords["x"], edit_coords["y"])
+    await page.wait_for_load_state("domcontentloaded")
+    await page.wait_for_timeout(800)
+
+
+async def process_assignment(page: Page, course_id: str, folder: dict, dry_run: bool) -> tuple[list[str], list[str]]:
+    """Replace Moodle references in one assignment's name and instructions."""
+    name = folder["Name"]
+    html = folder["Html"] or ""
+
+    new_name, name_changed = replace_moodle_in_title(name)
+    new_html, changes, warnings = replace_moodle(html, name)
+
+    if not changes and not warnings and not name_changed:
+        return [], []
+
+    print(f"\n  [Assignment] {name[:70]}")
+    for line in changes:
+        print(line)
+    for line in warnings:
+        print(line)
+    if name_changed:
+        print(f"  [title] '{name}' → '{new_name}'")
+        changes.append(f"  [title] '{name}' → '{new_name}'")
+
+    if dry_run:
+        print("    (dry run — not saved)")
+        return changes, warnings
+
+    # Fast path: navigate straight to the activity editor by constructed URL.
+    opened = False
+    try:
+        await page.goto(_activity_edit_url(course_id, "dropbox", folder["Id"]),
+                        wait_until="domcontentloaded")
+        opened = await _wait_editor_ready(page)
+    except Exception:
+        opened = False
+
+    if not opened:
+        # Fallback: admin list → Actions menu → Edit Assignment.
+        print("    (direct editor URL failed — falling back to list navigation)")
+        list_url = f"{BRIGHTSPACE_BASE}/d2l/lms/dropbox/admin/folders_manage.d2l?ou={course_id}"
+        for attempt in range(2):
+            try:
+                await page.goto(list_url, wait_until="domcontentloaded")
+                break
+            except Exception:
+                if attempt == 1:
+                    print("    ✗ Could not load assignments list — edit manually")
+                    return [], warnings
+                await page.wait_for_timeout(2500)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)
+        await set_per_page_200(page)
+        try:
+            await _open_assignment_edit_admin(page, name)
+        except Exception as e:
+            print(f"    ✗ Could not open editor: {e} — edit manually")
+            return [], warnings
+        await page.wait_for_timeout(2000)
+
+    if changes and html:
+        result = await _set_editor_html(page, new_html)
+        if result.startswith("no editor with moodle content"):
+            print("    ~ Instructions already clean in editor — continuing")
+            changes = [c for c in changes if c.startswith("  [title]")]
+        elif result != "ok":
+            print(f"    ✗ Could not set instructions: {result} — edit manually")
+            return [], warnings
+
+    if name_changed:
+        ok = await _set_title_with_retry(page, name, new_name)
+        print("    ✓ Title updated" if ok else "    ✗ Title input not found — rename manually")
+
+    await page.wait_for_timeout(500)
+    saved = await page.evaluate(_FIND_SAVE_AND_CLOSE_JS)
+    if not saved:
+        print("    ✗ Save and Close not found — save manually")
+        return [], warnings
+    await page.mouse.click(saved["x"], saved["y"])
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(1000)
+    print("    ✓ Saved")
+    return changes, warnings
+
+
+async def get_all_quizzes(page: Page, course_id: str) -> list[dict]:
+    """Fetch all quizzes (paged API) with description/header/footer HTML."""
+    for api_ver in ["1.70", "1.67", "1.68", "1.69", "1.60", "1.50"]:
+        quizzes: list[dict] = []
+        url = f"{BRIGHTSPACE_BASE}/d2l/api/le/{api_ver}/{course_id}/quizzes/"
+        ok = True
+        while url:
+            result = await page.evaluate("""
+                async (url) => {
+                    try {
+                        const r = await fetch(url);
+                        if (!r.ok) return { status: r.status };
+                        return { page: await r.json() };
+                    } catch(e) { return { error: e.message }; }
+                }
+            """, url)
+            data = (result or {}).get("page")
+            if data is None:
+                ok = False
+                detail = result.get("status") or result.get("error") or "no response"
+                print(f"  Quizzes API v{api_ver}: {detail}")
+                break
+            quizzes.extend(data.get("Objects") or [])
+            url = data.get("Next")
+        if ok:
+            print(f"  ✓ Quizzes API v{api_ver}")
+            return [
+                {
+                    "Id":     str(q.get("QuizId", "")),
+                    "Name":   q.get("Name", ""),
+                    "Html":   ((q.get("Description") or {}).get("Text") or {}).get("Html", "") or "",
+                    "Header": ((q.get("Header") or {}).get("Text") or {}).get("Html", "") or "",
+                    "Footer": ((q.get("Footer") or {}).get("Text") or {}).get("Html", "") or "",
+                }
+                for q in quizzes
+            ]
+    print("  ✗ Could not fetch quizzes — skipping quiz scan")
+    return []
+
+
+async def process_quiz(page: Page, course_id: str, quiz: dict, dry_run: bool) -> tuple[list[str], list[str]]:
+    """Replace Moodle references in one quiz's name and description."""
+    name = quiz["Name"]
+    html = quiz["Html"] or ""
+
+    new_name, name_changed = replace_moodle_in_title(name)
+    new_html, changes, warnings = replace_moodle(html, name)
+
+    for field in ("Header", "Footer"):
+        if re.search(r"moodle", quiz.get(field) or "", re.IGNORECASE):
+            warnings.append(f"  ⚠  [{name}] Moodle in quiz {field.lower()} — fix manually in the editor")
+
+    if not changes and not warnings and not name_changed:
+        return [], []
+
+    print(f"\n  [Quiz] {name[:70]}")
+    for line in changes:
+        print(line)
+    for line in warnings:
+        print(line)
+    if name_changed:
+        print(f"  [title] '{name}' → '{new_name}'")
+        changes.append(f"  [title] '{name}' → '{new_name}'")
+
+    if dry_run:
+        print("    (dry run — not saved)")
+        return changes, warnings
+
+    if not changes and not name_changed:
+        return [], warnings  # header/footer warnings only — nothing to save
+
+    list_url = f"{BRIGHTSPACE_BASE}/d2l/lms/quizzing/user/quizzes_list.d2l?ou={course_id}"
+    for attempt in range(2):
+        try:
+            await page.goto(list_url, wait_until="domcontentloaded")
+            break
+        except Exception:
+            if attempt == 1:
+                print("    ✗ Could not load quiz list — edit manually")
+                return [], warnings
+            await page.wait_for_timeout(2500)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(1000)
+    await set_per_page_200(page)
+    try:
+        await open_quiz_edit(page, name)
+    except Exception as e:
+        print(f"    ✗ Could not open editor: {e} — edit manually")
+        return [], warnings
+    await page.wait_for_timeout(2000)
+
+    if changes and html:
+        result = await _set_editor_html(page, new_html)
+        if result.startswith("no editor with moodle content"):
+            print("    ~ Description already clean in editor — continuing")
+            changes = [c for c in changes if c.startswith("  [title]")]
+        elif result != "ok":
+            print(f"    ✗ Could not set description: {result} — edit manually")
+            return [], warnings
+
+    if name_changed:
+        ok = await _set_title_with_retry(page, name, new_name)
+        print("    ✓ Title updated" if ok else "    ✗ Title input not found — rename manually")
+
+    await page.wait_for_timeout(500)
+    saved = await page.evaluate(_FIND_SAVE_AND_CLOSE_JS)
+    if not saved:
+        print("    ✗ Save and Close not found — save manually")
+        return [], warnings
+    await page.mouse.click(saved["x"], saved["y"])
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(1000)
+    print("    ✓ Saved")
+    return changes, warnings
+
+
+async def get_all_discussions(page: Page, course_id: str) -> list[dict]:
+    """Fetch all discussion forums and topics with their description HTML."""
+    for api_ver in ["1.70", "1.67", "1.68", "1.69", "1.60", "1.50"]:
+        forums = await page.evaluate(f"""
+            async () => {{
+                try {{
+                    const r = await fetch('{BRIGHTSPACE_BASE}/d2l/api/le/{api_ver}/{course_id}/discussions/forums/');
+                    if (!r.ok) return null;
+                    return await r.json();
+                }} catch(e) {{ return null; }}
+            }}
+        """)
+        if forums is None:
+            print(f"  Discussions API v{api_ver}: no response")
+            continue
+        print(f"  ✓ Discussions API v{api_ver}")
+        items: list[dict] = []
+        for f in forums:
+            desc = f.get("Description") or {}
+            items.append({
+                "Kind": "Forum",
+                "Id":   str(f.get("ForumId", "")),
+                "Name": f.get("Name", ""),
+                "Html": desc.get("Html") or desc.get("Text", "") or "",
+            })
+            topics = await page.evaluate(f"""
+                async () => {{
+                    try {{
+                        const r = await fetch('{BRIGHTSPACE_BASE}/d2l/api/le/{api_ver}/{course_id}/discussions/forums/{f.get("ForumId")}/topics/');
+                        if (!r.ok) return null;
+                        return await r.json();
+                    }} catch(e) {{ return null; }}
+                }}
+            """)
+            for t in (topics or []):
+                tdesc = t.get("Description") or {}
+                items.append({
+                    "Kind": "Topic",
+                    "Id":   str(t.get("TopicId", "")),
+                    "Name": t.get("Name", ""),
+                    "Html": tdesc.get("Html") or tdesc.get("Text", "") or "",
+                })
+        return items
+    print("  ✗ Could not fetch discussions — skipping discussion scan")
+    return []
+
+
+async def _open_discussion_edit(page: Page, name: str, kind: str) -> None:
+    """From the discussions list, open Edit Forum / Edit Topic for the named item.
+    A forum and its topic can share a name, so try each matching Actions button
+    until the right Edit menu item shows up."""
+    target = f"Edit {kind}"
+    for _ in range(3):
+        coords = await _find_action_button(page, name)
+        if coords is None:
+            raise Exception(f"Actions button for '{name}' not found")
+        await page.mouse.click(coords["x"], coords["y"])
+        await page.wait_for_timeout(500)
+        edit_coords = await _find_menu_item(page, target)
+        if edit_coords:
+            await page.mouse.click(edit_coords["x"], edit_coords["y"])
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(800)
+            return
+        # wrong menu (forum vs topic) — close it and scroll past this button
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
+        await page.evaluate("window.scrollBy(0, 200)")
+    raise Exception(f"'{target}' menu item for '{name}' not found")
+
+
+async def process_discussion(page: Page, course_id: str, item: dict, dry_run: bool) -> tuple[list[str], list[str]]:
+    """Replace Moodle references in one discussion forum/topic name and description."""
+    name = item["Name"]
+    kind = item["Kind"]
+    html = item["Html"] or ""
+
+    new_name, name_changed = replace_moodle_in_title(name)
+    new_html, changes, warnings = replace_moodle(html, name)
+
+    if not changes and not warnings and not name_changed:
+        return [], []
+
+    print(f"\n  [{kind}] {name[:70]}")
+    for line in changes:
+        print(line)
+    for line in warnings:
+        print(line)
+    if name_changed:
+        print(f"  [title] '{name}' → '{new_name}'")
+        changes.append(f"  [title] '{name}' → '{new_name}'")
+
+    if dry_run:
+        print("    (dry run — not saved)")
+        return changes, warnings
+
+    # Fast path (topics only): direct activity-editor URL.
+    opened = False
+    if kind == "Topic" and item.get("Id"):
+        try:
+            await page.goto(_activity_edit_url(course_id, "topic", item["Id"]),
+                            wait_until="domcontentloaded")
+            opened = await _wait_editor_ready(page)
+        except Exception:
+            opened = False
+
+    if not opened:
+        if kind == "Topic":
+            print("    (direct editor URL failed — falling back to list navigation)")
+        list_url = f"{BRIGHTSPACE_BASE}/d2l/le/{course_id}/discussions/List"
+        for attempt in range(2):
+            try:
+                await page.goto(list_url, wait_until="domcontentloaded")
+                break
+            except Exception:
+                if attempt == 1:
+                    print("    ✗ Could not load discussions list — edit manually")
+                    return [], warnings
+                await page.wait_for_timeout(2500)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)
+        try:
+            await _open_discussion_edit(page, name, kind)
+        except Exception as e:
+            print(f"    ✗ Could not open editor: {e} — edit manually")
+            return [], warnings
+        await page.wait_for_timeout(2000)
+
+    if changes and html:
+        result = await _set_editor_html(page, new_html)
+        if result.startswith("no editor with moodle content"):
+            print("    ~ Description already clean in editor — continuing")
+            changes = [c for c in changes if c.startswith("  [title]")]
+        elif result != "ok":
+            print(f"    ✗ Could not set description: {result} — edit manually")
+            return [], warnings
+
+    if name_changed:
+        ok = await _set_title_with_retry(page, name, new_name)
+        print("    ✓ Title updated" if ok else "    ✗ Title input not found — rename manually")
+
+    await page.wait_for_timeout(500)
+    saved = await page.evaluate(_FIND_SAVE_AND_CLOSE_JS)
+    if not saved:
+        print("    ✗ Save and Close not found — save manually")
+        return [], warnings
+    await page.mouse.click(saved["x"], saved["y"])
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(1000)
+    print("    ✓ Saved")
+    return changes, warnings
+
+
 async def pre_scan_topics(page: Page, topics: list[dict]) -> list[dict]:
     """Batch-fetch topic content URLs and return only those containing 'moodle'."""
     to_scan = [(t["TopicId"], t.get("Url", "")) for t in topics if t.get("Url")]
@@ -571,16 +1199,99 @@ async def pre_scan_topics(page: Page, topics: list[dict]) -> list[dict]:
     return [t for t in topics if t["TopicId"] in keep_ids]
 
 
+class _TaskLogRouter(io.TextIOBase):
+    """stdout proxy that buffers writes per asyncio task so parallel tabs
+    don't interleave their log lines. Unregistered tasks write through."""
+
+    def __init__(self, real):
+        self.real = real
+        self.buffers: dict = {}
+
+    def write(self, s):
+        buf = self.buffers.get(asyncio.current_task())
+        if buf is not None:
+            buf.append(s)
+        else:
+            self.real.write(s)
+        return len(s)
+
+    def flush(self):
+        try:
+            self.real.flush()
+        except Exception:
+            pass
+
+
+async def _process_parallel(context, course_id, items, worker_fn, dry_run, max_tabs=3):
+    """Run worker_fn(page, course_id, item, dry_run) over items using up to
+    max_tabs concurrent pages. Returns [(item, changes, warnings), ...]."""
+    results: list = []
+    if not items:
+        return results
+
+    queue: asyncio.Queue = asyncio.Queue()
+    for it in items:
+        queue.put_nowait(it)
+
+    router = _TaskLogRouter(sys.stdout)
+    real_stdout, sys.stdout = sys.stdout, router
+
+    async def worker():
+        page = await context.new_page()
+        task = asyncio.current_task()
+        try:
+            while True:
+                try:
+                    it = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                router.buffers[task] = []
+                try:
+                    changes, warnings = await worker_fn(page, course_id, it, dry_run)
+                    results.append((it, changes, warnings))
+                except Exception as e:
+                    print(f"\n  ✗ Skipped '{it['Name'][:50]}': {e}")
+                finally:
+                    chunk = "".join(router.buffers.pop(task, []))
+                    if chunk.strip():
+                        real_stdout.write(chunk if chunk.endswith("\n") else chunk + "\n")
+                        router.flush()
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+    try:
+        await asyncio.gather(*[worker() for _ in range(min(max_tabs, len(items)))])
+    finally:
+        sys.stdout = real_stdout
+    return results
+
+
+def _has_moodle(item: dict) -> bool:
+    hay = " ".join(str(item.get(k) or "") for k in ("Name", "Html", "Header", "Footer"))
+    return bool(re.search(r"moodle", hay, re.IGNORECASE))
+
+
 async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -> None:
     """Main entry point: scan all HTML topics in a course and replace Moodle references."""
     if dry_run:
         print("⚠  DRY RUN — no changes will be saved\n")
 
+    run_start = time.monotonic()
+    phase_start = run_start
+
+    def _phase_done(label: str):
+        nonlocal phase_start
+        now = time.monotonic()
+        print(f"  ⏱  {label}: {now - phase_start:.0f}s  (total {now - run_start:.0f}s)")
+        phase_start = now
+
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
             _BS_PROFILE,
             headless=False,
-            slow_mo=60,
             args=["--start-maximized"],
             no_viewport=True,
         )
@@ -679,10 +1390,54 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
                 modified_topics.append((topic["Title"], changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
+        _phase_done("Content topics")
+
+        print(f"\n{'─' * 50}")
+        print("Scanning assignment descriptions...")
+        assignments = await get_all_assignments(page, course_id)
+        flagged = [f for f in assignments if _has_moodle(f)]
+        print(f"{len(assignments)} assignment(s) found, {len(flagged)} with Moodle")
+        for folder, changes, warnings in await _process_parallel(
+            context, course_id, flagged, process_assignment, dry_run
+        ):
+            if changes or warnings:
+                modified_topics.append((f"[Assignment] {folder['Name']}", changes))
+            all_changes.extend(changes)
+            all_warnings.extend(warnings)
+        _phase_done("Assignments")
+
+        print(f"\n{'─' * 50}")
+        print("Scanning quiz descriptions...")
+        quizzes = await get_all_quizzes(page, course_id)
+        flagged = [q for q in quizzes if _has_moodle(q)]
+        print(f"{len(quizzes)} quiz(zes) found, {len(flagged)} with Moodle")
+        for quiz, changes, warnings in await _process_parallel(
+            context, course_id, flagged, process_quiz, dry_run
+        ):
+            if changes or warnings:
+                modified_topics.append((f"[Quiz] {quiz['Name']}", changes))
+            all_changes.extend(changes)
+            all_warnings.extend(warnings)
+        _phase_done("Quizzes")
+
+        print(f"\n{'─' * 50}")
+        print("Scanning discussion descriptions...")
+        discussions = await get_all_discussions(page, course_id)
+        flagged = [d for d in discussions if _has_moodle(d)]
+        print(f"{len(discussions)} forum(s)/topic(s) found, {len(flagged)} with Moodle")
+        for item, changes, warnings in await _process_parallel(
+            context, course_id, flagged, process_discussion, dry_run
+        ):
+            if changes or warnings:
+                modified_topics.append((f"[{item['Kind']}] {item['Name']}", changes))
+            all_changes.extend(changes)
+            all_warnings.extend(warnings)
+        _phase_done("Discussions")
 
         verb = "would be modified" if dry_run else "modified"
         print(f"\n{'─' * 50}")
         print(f"✓  Done — {len(modified_topics)} topic(s) {verb}")
+        print(f"⏱  Total run time: {time.monotonic() - run_start:.0f}s")
 
         if modified_topics:
             print(f"\nChanged topics:")
@@ -696,4 +1451,11 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
             for w in all_warnings:
                 print(f"  {w.strip()}")
 
+        # Let the last save request settle before tearing the browser down —
+        # closing immediately can abort the final Save and Close mid-flight.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2000)
         await context.close()
