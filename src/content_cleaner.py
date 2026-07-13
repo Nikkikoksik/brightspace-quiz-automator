@@ -611,6 +611,104 @@ _SET_TINYMCE_JS = """
 """
 
 
+# The quiz description editor's TinyMCE lives in a tox-edit-area iframe nested
+# in shadow DOM — invisible to window.tinymce (0 editors) and to per-frame
+# `tinymce` checks (undefined inside the edit-area iframe). Reach it from the
+# top frame: the iframe is same-origin, so set its body directly and fire input.
+_SET_SHADOW_IFRAME_JS = """
+    (html) => {
+        function walk(root) {
+            for (const f of root.querySelectorAll('iframe.tox-edit-area__iframe')) {
+                try {
+                    const d = f.contentDocument;
+                    if (d && d.body && /moodle/i.test(d.body.innerText || '')) {
+                        d.body.innerHTML = html;
+                        d.body.dispatchEvent(new Event('input', { bubbles: true }));
+                        d.body.dispatchEvent(new Event('change', { bubbles: true }));
+                        return 'ok';
+                    }
+                } catch(e) {}
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (el.shadowRoot) { const r = walk(el.shadowRoot); if (r) return r; }
+            }
+            return null;
+        }
+        return walk(document) || 'no shadow editor with moodle content';
+    }
+"""
+
+
+# The quiz description shows a read-only preview until clicked; only then does
+# its editable TinyMCE (tox-edit-area iframe) initialize. Find the element whose
+# own text contains 'moodle', scroll it into view, and return click coordinates
+# so we can enter edit mode on that specific field before replacing.
+_FIND_MOODLE_EDITOR_JS = """
+    () => {
+        const rx = /moodle/i;
+        let best = null;
+        function walk(root) {
+            for (const el of root.querySelectorAll('*')) {
+                let direct = '';
+                for (const n of el.childNodes) if (n.nodeType === 3) direct += n.nodeValue;
+                if (rx.test(direct)) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) best = el;
+                }
+                if (el.shadowRoot) walk(el.shadowRoot);
+            }
+        }
+        walk(document);
+        if (!best) return null;
+        best.scrollIntoView({ block: 'center' });
+        const r = best.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 40) };
+    }
+"""
+
+
+# Finds the box/input following a field's label (exact text match, e.g.
+# "Description" or "Quiz Title") and returns click coordinates on it. Used to
+# force a field into its editable/hydrated state deterministically, instead of
+# searching the live DOM for "moodle" text — that search races the preview
+# widget's render and can grab the wrong element (e.g. the page title, which
+# also contains "Moodle" when the quiz name does).
+_FIND_LABELED_BOX_JS = """
+    (label) => {
+        function find(root) {
+            for (const el of root.querySelectorAll('*')) {
+                let direct = '';
+                for (const n of el.childNodes) if (n.nodeType === 3) direct += n.nodeValue;
+                if (direct.trim() === label && el.nextElementSibling) {
+                    const box = el.nextElementSibling;
+                    const r = box.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) return box;
+                }
+                if (el.shadowRoot) { const c = find(el.shadowRoot); if (c) return c; }
+            }
+            return null;
+        }
+        const box = find(document);
+        if (!box) return null;
+        box.scrollIntoView({ block: 'center' });
+        const r = box.getBoundingClientRect();
+        return { x: r.left + Math.min(30, r.width / 2), y: r.top + Math.min(20, r.height / 2) };
+    }
+"""
+
+
+async def _click_labeled_field(page: Page, label: str) -> bool:
+    """Click into the box/input following a label with exact text `label`."""
+    try:
+        coords = await page.evaluate(_FIND_LABELED_BOX_JS, label)
+    except Exception:
+        coords = None
+    if not coords:
+        return False
+    await page.mouse.click(coords["x"], coords["y"])
+    return True
+
+
 _FIND_HTMLEDITOR_JS = """
     () => {
         function find(root) {
@@ -672,10 +770,26 @@ async def _set_editor_html(edit_page, new_html: str) -> str:
     if result == "ok":
         return "ok"
 
+    # Shadow-DOM editors (e.g. the quiz description) aren't reachable via
+    # window.tinymce or per-frame checks — try the tox-edit-area iframe directly.
     try:
-        coords = await edit_page.evaluate(_FIND_HTMLEDITOR_JS)
+        if await edit_page.evaluate(_SET_SHADOW_IFRAME_JS, new_html) == "ok":
+            return "ok"
+    except Exception:
+        pass
+
+    # Click the preview text that actually contains 'moodle' to initialize that
+    # field's editor; fall back to the first html editor if none is found.
+    coords = None
+    try:
+        coords = await edit_page.evaluate(_FIND_MOODLE_EDITOR_JS)
     except Exception:
         coords = None
+    if not coords:
+        try:
+            coords = await edit_page.evaluate(_FIND_HTMLEDITOR_JS)
+        except Exception:
+            coords = None
     if coords:
         await edit_page.mouse.click(coords["x"], coords["y"])
 
@@ -684,6 +798,11 @@ async def _set_editor_html(edit_page, new_html: str) -> str:
         result = await _try_set_all_frames(edit_page, new_html)
         if result == "ok":
             return "ok"
+        try:
+            if await edit_page.evaluate(_SET_SHADOW_IFRAME_JS, new_html) == "ok":
+                return "ok"
+        except Exception:
+            pass
 
     try:
         diag = await edit_page.evaluate(_EDITOR_DIAG_JS)
@@ -694,9 +813,10 @@ async def _set_editor_html(edit_page, new_html: str) -> str:
 
 # Direct activity-editor URLs: /d2l/le/activities/edit/<token> where token is
 # B64(B64("6606_<code>_<objectId>") + "." + courseId), padding stripped.
-# Verified live for dropbox (2000) and discussion topics (3000). optOutUrl=
-# must be present or the editor renders "Opt Out Url is missing".
-_EDIT_TOKEN_CODES = {"dropbox": "2000", "topic": "3000"}
+# Verified live for dropbox (2000), discussion topics (3000), and quizzes
+# (51000, cft=quiz — quiz_newedit_properties.d2l?qi=<id> redirects here).
+# optOutUrl= must be present or the editor renders "Opt Out Url is missing".
+_EDIT_TOKEN_CODES = {"dropbox": "2000", "topic": "3000", "quiz": "51000"}
 
 
 def _activity_edit_url(course_id: str, cft: str, obj_id: str) -> str:
@@ -936,28 +1056,50 @@ async def process_quiz(page: Page, course_id: str, quiz: dict, dry_run: bool) ->
     if not changes and not name_changed:
         return [], warnings  # header/footer warnings only — nothing to save
 
-    list_url = f"{BRIGHTSPACE_BASE}/d2l/lms/quizzing/user/quizzes_list.d2l?ou={course_id}"
-    for attempt in range(2):
+    # Fast path: navigate straight to the activity editor by constructed URL.
+    opened = False
+    if quiz.get("Id"):
         try:
-            await page.goto(list_url, wait_until="domcontentloaded")
-            break
+            await page.goto(_activity_edit_url(course_id, "quiz", quiz["Id"]),
+                            wait_until="domcontentloaded")
+            opened = await _wait_editor_ready(page)
         except Exception:
-            if attempt == 1:
-                print("    ✗ Could not load quiz list — edit manually")
-                return [], warnings
-            await page.wait_for_timeout(2500)
-    try:
-        await page.wait_for_load_state("networkidle", timeout=10000)
-    except Exception:
-        pass
-    await page.wait_for_timeout(1000)
-    await set_per_page_200(page)
-    try:
-        await open_quiz_edit(page, name)
-    except Exception as e:
-        print(f"    ✗ Could not open editor: {e} — edit manually")
-        return [], warnings
-    await page.wait_for_timeout(2000)
+            opened = False
+
+    if not opened:
+        # Fallback: user quiz list → Actions menu → Edit.
+        print("    (direct editor URL failed — falling back to list navigation)")
+        list_url = f"{BRIGHTSPACE_BASE}/d2l/lms/quizzing/user/quizzes_list.d2l?ou={course_id}"
+        for attempt in range(2):
+            try:
+                await page.goto(list_url, wait_until="domcontentloaded")
+                break
+            except Exception:
+                if attempt == 1:
+                    print("    ✗ Could not load quiz list — edit manually")
+                    return [], warnings
+                await page.wait_for_timeout(2500)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)
+        await set_per_page_200(page)
+        try:
+            await open_quiz_edit(page, name)
+        except Exception as e:
+            print(f"    ✗ Could not open editor: {e} — edit manually")
+            return [], warnings
+        await page.wait_for_timeout(2000)
+
+    # Click into both boxes up front — by label, regardless of which field
+    # actually needs a change — so both editors are hydrated before we try
+    # to read/replace anything. Clicking only the field being changed was
+    # unreliable: the Description box's TinyMCE sometimes never initialized.
+    await _click_labeled_field(page, "Quiz Title")
+    await page.wait_for_timeout(500)
+    await _click_labeled_field(page, "Description")
+    await page.wait_for_timeout(500)
 
     if changes and html:
         result = await _set_editor_html(page, new_html)
