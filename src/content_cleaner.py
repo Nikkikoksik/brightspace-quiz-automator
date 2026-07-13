@@ -389,7 +389,8 @@ async def process_topic(
             edit_page = await _open_topic_edit_page(page, topic_id, course_id)
     except Exception as e:
         print(f"    Skipped: {e}")
-        return [], []
+        viewer_url = f"{BRIGHTSPACE_BASE}/d2l/le/content/{course_id}/viewContent/{topic_id}/View"
+        return [], [f"  ⚠  [{title}] Could not open editor ({e}) — hard check manually: {viewer_url}"]
 
     html = None
     via_dialog = False
@@ -450,7 +451,8 @@ async def process_topic(
     if html is None and not title_changed:
         print("    Not an HTML topic — skipped")
         await _close(edit_page)
-        return [], []
+        viewer_url = f"{BRIGHTSPACE_BASE}/d2l/le/content/{course_id}/viewContent/{topic_id}/View"
+        return [], [f"  ⚠  [{title}] Not an HTML topic — hard check manually: {viewer_url}"]
 
     if html is not None:
         new_html, changes, warnings = replace_moodle(html, title)
@@ -601,7 +603,18 @@ _SET_TINYMCE_JS = """
                 const content = ed.getContent() || '';
                 if (/moodle/i.test(content)) {
                     ed.setContent(html);
+                    ed.save();
                     ed.fire('change');
+                    // ed.save() sets the underlying textarea's .value
+                    // directly, which never fires a native DOM event —
+                    // D2L's own component likely listens on the textarea
+                    // itself (not TinyMCE's internal event bus) to know
+                    // when to sync its state, so dispatch that explicitly.
+                    const ta = document.getElementById(ed.id);
+                    if (ta) {
+                        ta.dispatchEvent(new Event('input', { bubbles: true }));
+                        ta.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
                     return 'ok';
                 }
             }
@@ -611,10 +624,29 @@ _SET_TINYMCE_JS = """
 """
 
 
+# Readiness predicate for page.wait_for_function — true once a main-frame
+# TinyMCE editor containing "moodle" exists, so we can poll every ~150ms
+# instead of blindly sleeping a full second between checks.
+_EDITOR_READY_JS = """
+    () => {
+        if (typeof tinymce === 'undefined') return false;
+        const editors = tinymce.editors || tinymce.get() || [];
+        for (const ed of editors) {
+            if (/moodle/i.test(ed.getContent() || '')) return true;
+        }
+        return false;
+    }
+"""
+
+
 # The quiz description editor's TinyMCE lives in a tox-edit-area iframe nested
-# in shadow DOM — invisible to window.tinymce (0 editors) and to per-frame
-# `tinymce` checks (undefined inside the edit-area iframe). Reach it from the
-# top frame: the iframe is same-origin, so set its body directly and fire input.
+# in shadow DOM. window.tinymce.editors is empty here (D2L doesn't register it
+# there), but window.tinymce.get(<iframe id minus "_ifr">) DOES return a live
+# editor instance with the real API — confirmed via live DevTools inspection.
+# Writing raw innerHTML into the iframe body bypasses TinyMCE's own model, so
+# it looked like it worked but D2L's Save reads from TinyMCE's model and
+# silently kept the old content. Use the real API and call save() so the
+# change is synced back to whatever field D2L actually persists from.
 _SET_SHADOW_IFRAME_JS = """
     (html) => {
         function walk(root) {
@@ -622,6 +654,16 @@ _SET_SHADOW_IFRAME_JS = """
                 try {
                     const d = f.contentDocument;
                     if (d && d.body && /moodle/i.test(d.body.innerText || '')) {
+                        const editorId = (f.id || '').replace(/_ifr$/, '');
+                        const editor = editorId && window.tinymce && window.tinymce.get
+                            ? window.tinymce.get(editorId) : null;
+                        if (editor && editor.setContent) {
+                            editor.setContent(html);
+                            editor.save();
+                            editor.fire('change');
+                            return 'ok';
+                        }
+                        // Fallback: raw DOM write (previous behavior).
                         d.body.innerHTML = html;
                         d.body.dispatchEvent(new Event('input', { bubbles: true }));
                         d.body.dispatchEvent(new Event('change', { bubbles: true }));
@@ -778,6 +820,13 @@ async def _set_editor_html(edit_page, new_html: str) -> str:
     except Exception:
         pass
 
+    # Quiz editors in particular have more lazily-loading sub-components than
+    # assignments/discussions (which never needed a click at all). Clicking
+    # immediately risks hitting a preview node that gets torn down and
+    # replaced moments later as the editor finishes settling, losing the
+    # click. Give it a moment to stabilize before the very first click.
+    await edit_page.wait_for_timeout(3000)
+
     # Click the preview text that actually contains 'moodle' to initialize that
     # field's editor; fall back to the first html editor if none is found.
     coords = None
@@ -793,16 +842,37 @@ async def _set_editor_html(edit_page, new_html: str) -> str:
     if coords:
         await edit_page.mouse.click(coords["x"], coords["y"])
 
-    for _ in range(10):
-        await edit_page.wait_for_timeout(1000)
-        result = await _try_set_all_frames(edit_page, new_html)
-        if result == "ok":
-            return "ok"
+    # Poll inside the browser at a tight interval instead of Python sleeping
+    # a full second between checks — resolves in ~150ms once the lazily-
+    # hydrated editor is actually ready, rather than always waiting whole
+    # seconds regardless of how fast the page really loaded.
+    for attempt in range(3):
+        try:
+            await edit_page.wait_for_function(_EDITOR_READY_JS, timeout=10000, polling=150)
+        except Exception:
+            pass  # timed out — fall through and try anyway, diag will explain why
+        else:
+            result = await _try_set_all_frames(edit_page, new_html)
+            if result == "ok":
+                return "ok"
         try:
             if await edit_page.evaluate(_SET_SHADOW_IFRAME_JS, new_html) == "ok":
                 return "ok"
         except Exception:
             pass
+        # The initial click may have missed (element not yet hydrated, or
+        # coords stale after a re-render) — retry it before giving up.
+        if attempt < 2:
+            try:
+                retry_coords = await edit_page.evaluate(_FIND_MOODLE_EDITOR_JS)
+                if retry_coords:
+                    await edit_page.mouse.click(retry_coords["x"], retry_coords["y"])
+            except Exception:
+                pass
+
+    result = await _try_set_all_frames(edit_page, new_html)
+    if result == "ok":
+        return "ok"
 
     try:
         diag = await edit_page.evaluate(_EDITOR_DIAG_JS)
@@ -960,7 +1030,10 @@ async def process_assignment(page: Page, course_id: str, folder: dict, dry_run: 
     if changes and html:
         result = await _set_editor_html(page, new_html)
         if result.startswith("no editor with moodle content"):
-            print("    ~ Instructions already clean in editor — continuing")
+            # The API confirmed Moodle text is in these instructions, so this
+            # isn't actually "clean" — the editor never hydrated in time.
+            print(f"    ✗ Could not reach instructions editor — hard check manually. Diag: {result}")
+            warnings.append(f"  ⚠  [{name}] Instructions not verified/updated — hard check manually: {result}")
             changes = [c for c in changes if c.startswith("  [title]")]
         elif result != "ok":
             print(f"    ✗ Could not set instructions: {result} — edit manually")
@@ -1013,11 +1086,12 @@ async def get_all_quizzes(page: Page, course_id: str) -> list[dict]:
             print(f"  ✓ Quizzes API v{api_ver}")
             return [
                 {
-                    "Id":     str(q.get("QuizId", "")),
-                    "Name":   q.get("Name", ""),
-                    "Html":   ((q.get("Description") or {}).get("Text") or {}).get("Html", "") or "",
-                    "Header": ((q.get("Header") or {}).get("Text") or {}).get("Html", "") or "",
-                    "Footer": ((q.get("Footer") or {}).get("Text") or {}).get("Html", "") or "",
+                    "Id":               str(q.get("QuizId", "")),
+                    "Name":             q.get("Name", ""),
+                    "Html":             ((q.get("Description") or {}).get("Text") or {}).get("Html", "") or "",
+                    "Header":           ((q.get("Header") or {}).get("Text") or {}).get("Html", "") or "",
+                    "Footer":           ((q.get("Footer") or {}).get("Text") or {}).get("Html", "") or "",
+                    "PasswordProtected": bool(q.get("Password")),
                 }
                 for q in quizzes
             ]
@@ -1026,9 +1100,16 @@ async def get_all_quizzes(page: Page, course_id: str) -> list[dict]:
 
 
 async def process_quiz(page: Page, course_id: str, quiz: dict, dry_run: bool) -> tuple[list[str], list[str]]:
-    """Replace Moodle references in one quiz's name and description."""
+    """Replace Moodle references in one quiz's name and description.
+    Password-protected quizzes skip the automated description edit and flag
+    it for manual review instead — live testing showed the description save
+    is unreliable through this automation specifically for password-protected
+    quizzes (confirmed against two quizzes: the protected one failed every
+    attempt, an unprotected one with otherwise identical handling succeeded
+    reliably). Titles save reliably either way."""
     name = quiz["Name"]
     html = quiz["Html"] or ""
+    password_protected = bool(quiz.get("PasswordProtected"))
 
     new_name, name_changed = replace_moodle_in_title(name)
     new_html, changes, warnings = replace_moodle(html, name)
@@ -1049,25 +1130,43 @@ async def process_quiz(page: Page, course_id: str, quiz: dict, dry_run: bool) ->
         print(f"  [title] '{name}' → '{new_name}'")
         changes.append(f"  [title] '{name}' → '{new_name}'")
 
+    skip_description_edit = changes and html and password_protected
+    if skip_description_edit:
+        edit_url = _activity_edit_url(course_id, "quiz", quiz["Id"]) if quiz.get("Id") else None
+        print("    ⚠ Password-protected — description flagged for manual review instead of auto-editing")
+        warnings.append(
+            f"  ⚠  [{name}] Password-protected quiz — description contains 'Moodle', please update manually"
+            + (f": {edit_url}" if edit_url else "")
+        )
+        changes = [c for c in changes if c.startswith("  [title]")]
+
     if dry_run:
         print("    (dry run — not saved)")
         return changes, warnings
 
     if not changes and not name_changed:
-        return [], warnings  # header/footer warnings only — nothing to save
+        return [], warnings  # header/footer warnings only, or description flagged — nothing to save
 
-    # Fast path: navigate straight to the activity editor by constructed URL.
     opened = False
     if quiz.get("Id"):
         try:
-            await page.goto(_activity_edit_url(course_id, "quiz", quiz["Id"]),
-                            wait_until="domcontentloaded")
-            opened = await _wait_editor_ready(page)
+            await page.goto(_activity_edit_url(course_id, "quiz", quiz["Id"]), wait_until="domcontentloaded")
+            if await _wait_editor_ready(page):
+                opened = True
+                # Quiz editors have far more lazily-loaded sub-components
+                # than assignment/discussion editors — give the whole page a
+                # chance to finish settling before touching anything. This
+                # measurably fixed intermittent description-save failures on
+                # non-password-protected quizzes during testing.
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=12000)
+                except Exception:
+                    pass
+                await page.wait_for_timeout(9000)
         except Exception:
             opened = False
 
     if not opened:
-        # Fallback: user quiz list → Actions menu → Edit.
         print("    (direct editor URL failed — falling back to list navigation)")
         list_url = f"{BRIGHTSPACE_BASE}/d2l/lms/quizzing/user/quizzes_list.d2l?ou={course_id}"
         for attempt in range(2):
@@ -1092,16 +1191,14 @@ async def process_quiz(page: Page, course_id: str, quiz: dict, dry_run: bool) ->
             return [], warnings
         await page.wait_for_timeout(2000)
 
-    # Click into both boxes up front — by label, regardless of which field
-    # actually needs a change — so both editors are hydrated before we try
-    # to read/replace anything. Clicking only the field being changed was
-    # unreliable: the Description box's TinyMCE sometimes never initialized.
     await _click_labeled_field(page, "Quiz Title")
     await page.wait_for_timeout(500)
-    await _click_labeled_field(page, "Description")
-    await page.wait_for_timeout(500)
 
-    if changes and html:
+    if name_changed:
+        ok = await _set_title_with_retry(page, name, new_name)
+        print("    ✓ Title updated" if ok else "    ✗ Title input not found — rename manually")
+
+    if changes and html and not skip_description_edit:
         result = await _set_editor_html(page, new_html)
         if result.startswith("no editor with moodle content"):
             print("    ~ Description already clean in editor — continuing")
@@ -1110,11 +1207,7 @@ async def process_quiz(page: Page, course_id: str, quiz: dict, dry_run: bool) ->
             print(f"    ✗ Could not set description: {result} — edit manually")
             return [], warnings
 
-    if name_changed:
-        ok = await _set_title_with_retry(page, name, new_name)
-        print("    ✓ Title updated" if ok else "    ✗ Title input not found — rename manually")
-
-    await page.wait_for_timeout(500)
+    await page.wait_for_timeout(2000)
     saved = await page.evaluate(_FIND_SAVE_AND_CLOSE_JS)
     if not saved:
         print("    ✗ Save and Close not found — save manually")
@@ -1263,7 +1356,11 @@ async def process_discussion(page: Page, course_id: str, item: dict, dry_run: bo
     if changes and html:
         result = await _set_editor_html(page, new_html)
         if result.startswith("no editor with moodle content"):
-            print("    ~ Description already clean in editor — continuing")
+            # The API confirmed Moodle text is in this description, so this
+            # isn't actually "clean" — it means the editor never hydrated in
+            # time. Surface it as a hard check instead of silently dropping it.
+            print(f"    ✗ Could not reach description editor — hard check manually. Diag: {result}")
+            warnings.append(f"  ⚠  [{name}] Description not verified/updated — hard check manually: {result}")
             changes = [c for c in changes if c.startswith("  [title]")]
         elif result != "ok":
             print(f"    ✗ Could not set description: {result} — edit manually")
@@ -1528,7 +1625,7 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
                     break
 
             changes, warnings = await process_topic(page, course_id, topic, dry_run)
-            if changes or warnings:
+            if changes:
                 modified_topics.append((topic["Title"], changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
@@ -1542,7 +1639,7 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
         for folder, changes, warnings in await _process_parallel(
             context, course_id, flagged, process_assignment, dry_run
         ):
-            if changes or warnings:
+            if changes:
                 modified_topics.append((f"[Assignment] {folder['Name']}", changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
@@ -1556,7 +1653,7 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
         for quiz, changes, warnings in await _process_parallel(
             context, course_id, flagged, process_quiz, dry_run
         ):
-            if changes or warnings:
+            if changes:
                 modified_topics.append((f"[Quiz] {quiz['Name']}", changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
@@ -1570,7 +1667,7 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
         for item, changes, warnings in await _process_parallel(
             context, course_id, flagged, process_discussion, dry_run
         ):
-            if changes or warnings:
+            if changes:
                 modified_topics.append((f"[{item['Kind']}] {item['Name']}", changes))
             all_changes.extend(changes)
             all_warnings.extend(warnings)
@@ -1588,9 +1685,17 @@ async def scan_course(course_url: str, dry_run: bool = False, history_fn=None) -
                 for c in changes:
                     print(f"    {c.strip()}")
 
-        if all_warnings:
+        hard_checks = [w for w in all_warnings if "hard check manually" in w]
+        link_warnings = [w for w in all_warnings if w not in hard_checks]
+
+        if link_warnings:
             print(f"\n⚠  Moodle links flagged for manual review:")
-            for w in all_warnings:
+            for w in link_warnings:
+                print(f"  {w.strip()}")
+
+        if hard_checks:
+            print(f"\n🔍 Hard checks — could not verify automatically, review manually:")
+            for w in hard_checks:
                 print(f"  {w.strip()}")
 
         # Let the last save request settle before tearing the browser down —
